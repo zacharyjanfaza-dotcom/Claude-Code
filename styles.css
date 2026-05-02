@@ -350,86 +350,14 @@ a { text-decoration: none; color: inherit; }
   margin-bottom: 4px;
 }
 
-.bio-card__location {
-  font-size: 0.85rem;
-  color: var(--gray-500);
-  margin-bottom: 32px;
-}
-
-.bio-card__section {
-  margin-bottom: 32px;
-}
-
-.bio-card__section h3 {
-  font-family: var(--font-sans);
-  font-size: 0.72rem;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--gray-500);
-  margin-bottom: 16px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--gray-200);
-}
-
-/* ── Timeline ───────────────────────────── */
-.timeline {
-  list-style: none;
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.timeline__item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.timeline__meta {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.timeline__meta strong {
-  font-size: 0.95rem;
-  color: var(--navy);
-  font-weight: 600;
-}
-
-.timeline__date {
-  font-size: 0.8rem;
-  color: var(--gray-500);
-  white-space: nowrap;
-}
-
-.timeline__roles {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding-left: 12px;
-  border-left: 2px solid var(--gray-200);
-}
-
-.timeline__role {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.timeline__role-title {
-  font-size: 0.88rem;
+.bio-card__prose {
+  font-size: 0.97rem;
   color: var(--gray-700);
+  line-height: 1.75;
+  margin-bottom: 16px;
 }
-
-.timeline__role-date {
-  font-size: 0.78rem;
-  color: var(--gray-500);
+.bio-card__prose:last-of-type {
+  margin-bottom: 28px;
 }
 
 /* ── LinkedIn Link ──────────────────────── */
@@ -511,12 +439,6 @@ a { text-decoration: none; color: inherit; }
     flex-direction: column;
     gap: 24px;
     padding: 28px 20px;
-  }
-
-  .timeline__meta,
-  .timeline__role {
-    flex-direction: column;
-    gap: 2px;
   }
 
   .footer__bottom {

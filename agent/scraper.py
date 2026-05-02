@@ -1,11 +1,15 @@
 """
-Scrapes two source categories:
-  1. Crexi – industrial listings, East Coast (uses Playwright for JS rendering)
-  2. Bankruptcy/liquidation for manufacturing facilities
-     (CourtListener PACER + Hilco Global + Tiger Group)
+Scrapes publicly accessible sources for:
+  1. Bankruptcy filings — CourtListener (PACER)
+  2. Industrial liquidation auctions — Hilco Global, Tiger Group,
+     Heritage Global, Rabin Worldwide
+  3. Commercial foreclosure auctions — Ten-X Commercial, Bid4Assets
+
+Crexi and LoopNet block automated access (Cloudflare). Pre-built
+search links for those are returned as MANUAL_SEARCH_LINKS so they
+appear as clickable shortcuts in the weekly digest.
 """
 
-import json
 import logging
 import urllib.parse
 from dataclasses import dataclass, field
@@ -30,10 +34,20 @@ EAST_COAST_STATES = [
     "PA", "MD", "DE", "VA", "NC", "SC", "GA", "FL", "DC",
 ]
 
+EAST_COAST_STATE_NAMES = [
+    "New York", "New Jersey", "Connecticut", "Massachusetts", "Rhode Island",
+    "New Hampshire", "Maine", "Vermont", "Pennsylvania", "Maryland",
+    "Delaware", "Virginia", "North Carolina", "South Carolina",
+    "Georgia", "Florida", "Washington DC",
+]
+
 MFG_KEYWORDS = [
     "manufactur", "industrial", "fabricat", "processing", "warehouse",
     "distribution", "assembly", "production", "plant", "mill", "factory",
+    "flex", "light industrial", "commercial real estate",
 ]
+
+_90_DAYS_AGO = (date.today() - timedelta(days=90)).isoformat()
 
 
 @dataclass
@@ -50,274 +64,227 @@ class Listing:
 
 
 # ─────────────────────────────────────────────
-# Crexi  (Playwright — loads real JS)
+# CourtListener — free PACER bankruptcy search
 # ─────────────────────────────────────────────
-
-_CREXI_SEARCH = (
-    "https://www.crexi.com/properties"
-    "?types=Industrial"
-    "&states=" + ",".join(EAST_COAST_STATES)
-)
-
-
-def scrape_crexi() -> list[Listing]:
-    """
-    Uses Playwright to render Crexi's React SPA, waits for listing cards to
-    appear, then extracts title / location / price / size / URL from each card.
-    """
-    from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-
-    listings: list[Listing] = []
-
-    with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
-        page = browser.new_page(
-            user_agent=HEADERS["User-Agent"],
-            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
-        )
-
-        try:
-            page.goto(_CREXI_SEARCH, wait_until="domcontentloaded", timeout=45_000)
-
-            # Wait for at least one listing card to appear
-            page.wait_for_selector(
-                ".property-card, [data-testid='property-card'], "
-                ".asset-card, [class*='PropertyCard'], [class*='ListingCard']",
-                timeout=30_000,
-            )
-        except PWTimeout:
-            log.warning("Crexi: timed out waiting for listing cards")
-            browser.close()
-            return listings
-
-        # Pull the page content after JS has run
-        content = page.content()
-        browser.close()
-
-    soup = BeautifulSoup(content, "lxml")
-
-    # Try to grab embedded JSON state first (fastest / most complete)
-    next_data = soup.find("script", id="__NEXT_DATA__")
-    if next_data and next_data.string:
-        try:
-            blob = json.loads(next_data.string)
-            assets = (
-                _deep_get(blob, "props", "pageProps", "assets")
-                or _deep_get(blob, "props", "pageProps", "listings")
-                or []
-            )
-            for a in assets:
-                listings.append(Listing(
-                    source="Crexi",
-                    title=a.get("name") or a.get("title") or "Industrial Property",
-                    url=f"https://www.crexi.com/properties/{a.get('id') or a.get('slug', '')}",
-                    location=_join(a.get("city"), a.get("state")),
-                    price=_fmt_price(a.get("askingPrice") or a.get("price")),
-                    size_sf=_fmt_sf(a.get("buildingSize") or a.get("totalSqFt")),
-                    property_type="Industrial",
-                    description=(a.get("description") or "")[:400],
-                    raw=a,
-                ))
-            if listings:
-                log.info("Crexi: %d listings (from JSON state)", len(listings))
-                return listings
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # Fall back to parsing rendered HTML cards
-    card_selectors = [
-        ".property-card",
-        "[data-testid='property-card']",
-        "[class*='PropertyCard']",
-        "[class*='AssetCard']",
-        "[class*='ListingCard']",
-    ]
-    cards = []
-    for sel in card_selectors:
-        cards = soup.select(sel)
-        if cards:
-            break
-
-    for card in cards:
-        title = _text(card, "h2, h3, h4, [class*='title'], [class*='name']")
-        loc = _text(card, "[class*='location'], [class*='address'], [class*='city']")
-        price = _text(card, "[class*='price'], [class*='asking']")
-        sf = _text(card, "[class*='size'], [class*='sqft'], [class*='buildingSize']")
-        link = card.find("a", href=True)
-        url = ("https://www.crexi.com" + link["href"]
-               if link and link["href"].startswith("/")
-               else (link["href"] if link else _CREXI_SEARCH))
-        if title:
-            listings.append(Listing(
-                source="Crexi",
-                title=title,
-                url=url,
-                location=loc,
-                price=price,
-                size_sf=sf,
-                property_type="Industrial",
-            ))
-
-    log.info("Crexi: %d listings (from HTML cards)", len(listings))
-    return listings
-
-
-# ─────────────────────────────────────────────
-# CourtListener — free public PACER search
-# ─────────────────────────────────────────────
-
-_CL_DOCKETS = "https://www.courtlistener.com/api/rest/v4/dockets/"
-_NINETY_DAYS_AGO = (date.today() - timedelta(days=90)).isoformat()
-
-# Bankruptcy court slugs for East Coast districts
-_EC_BK_COURTS = [
-    "nybk", "nysb", "nyeb",          # New York
-    "njb",                             # New Jersey
-    "ctb",                             # Connecticut
-    "mab",                             # Massachusetts
-    "pab", "pawb",                     # Pennsylvania
-    "mdb",                             # Maryland
-    "vab", "vaeb", "vawb",            # Virginia
-    "nceb", "ncwb", "ncmb",           # North Carolina
-    "scb",                             # South Carolina
-    "gab", "ganb",                     # Georgia
-    "flsb", "flnb", "flmb",           # Florida
-    "deb",                             # Delaware
-]
-
 
 def scrape_courtlistener() -> list[Listing]:
-    """
-    Searches CourtListener's PACER docket index for recent Chapter 7/11
-    bankruptcy filings mentioning industrial or manufacturing assets.
-    """
+    """Free public API for PACER dockets. Searches for bankruptcy filings
+    involving manufacturing, industrial, and warehouse assets."""
     session = requests.Session()
     seen: set[str] = set()
     listings: list[Listing] = []
 
-    search_terms = [
-        "manufacturing facility",
-        "industrial building",
-        "warehouse distribution",
-        "fabrication plant",
-        "production facility",
-    ]
-
-    for term in search_terms:
+    for term in ["manufacturing", "industrial building", "warehouse", "fabrication plant"]:
         try:
             resp = session.get(
-                _CL_DOCKETS,
+                "https://www.courtlistener.com/api/rest/v4/search/",
                 params={
+                    "type": "d",
                     "q": term,
                     "order_by": "date_filed desc",
-                    "date_filed__gte": _NINETY_DAYS_AGO,
+                    "filed_after": _90_DAYS_AGO,
                     "page_size": 20,
                 },
                 headers={**HEADERS, "Accept": "application/json"},
                 timeout=20,
             )
             if resp.status_code != 200:
-                log.debug("CourtListener returned %s for '%s'", resp.status_code, term)
+                log.debug("CourtListener '%s' → %s", term, resp.status_code)
                 continue
-
             for r in resp.json().get("results") or []:
-                case_url = r.get("absolute_url") or ""
-                if not case_url.startswith("http"):
-                    case_url = "https://www.courtlistener.com" + case_url
-
-                if case_url in seen:
+                rel = r.get("absolute_url") or ""
+                url = rel if rel.startswith("http") else "https://www.courtlistener.com" + rel
+                if url in seen:
                     continue
-                seen.add(case_url)
-
-                case_name = r.get("case_name") or r.get("caseName") or "Unknown"
-                docket_num = r.get("docket_number") or ""
-                date_filed = r.get("date_filed") or ""
-                court = (r.get("court_id") or r.get("court") or "").upper()
-                chapter = _guess_chapter(case_name, r)
-
+                seen.add(url)
+                name = r.get("caseName") or r.get("case_name") or "Unknown"
                 listings.append(Listing(
                     source="CourtListener (PACER)",
-                    title=f"{case_name}",
-                    url=case_url,
-                    location=court,
-                    property_type=f"Bankruptcy {chapter}",
-                    description=f"Docket {docket_num} • Filed {date_filed} • matched: {term}",
+                    title=name,
+                    url=url,
+                    location=(r.get("court") or r.get("court_id") or "").upper(),
+                    property_type="Bankruptcy Filing",
+                    description=(
+                        f"Docket {r.get('docketNumber') or r.get('docket_number') or ''} · "
+                        f"Filed {r.get('dateFiled') or r.get('date_filed') or ''} · "
+                        f"keyword: {term}"
+                    ),
                 ))
-
         except Exception as exc:
-            log.debug("CourtListener term '%s' failed: %s", term, exc)
+            log.warning("CourtListener '%s': %s", term, exc)
 
-    log.info("CourtListener: %d unique filings", len(listings))
+    log.info("CourtListener: %d filings", len(listings))
     return listings
 
 
-def _guess_chapter(case_name: str, record: dict) -> str:
-    """Best-effort Chapter number from case name or record fields."""
-    for field in ("chapter", "nature_of_suit"):
-        val = str(record.get(field) or "")
-        if "7" in val:
-            return "Chapter 7"
-        if "11" in val:
-            return "Chapter 11"
-    name_lower = case_name.lower()
-    if "chapter 7" in name_lower:
-        return "Chapter 7"
-    if "chapter 11" in name_lower:
-        return "Chapter 11"
-    return "Filing"
+# ─────────────────────────────────────────────
+# Ten-X Commercial — commercial property auctions
+# (includes bank-owned / REO / lender-controlled)
+# ─────────────────────────────────────────────
+
+def scrape_tenx() -> list[Listing]:
+    session = requests.Session()
+    listings: list[Listing] = []
+    try:
+        resp = session.get(
+            "https://www.ten-x.com/company/blog/listings/",
+            headers=HEADERS, timeout=25,
+        )
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        # Ten-X embeds listing data as JSON in script tags
+        for script in soup.find_all("script", type="application/ld+json"):
+            try:
+                import json
+                data = json.loads(script.string or "")
+                items = data if isinstance(data, list) else [data]
+                for item in items:
+                    if item.get("@type") not in ("Product", "Offer", "RealEstateListing"):
+                        continue
+                    title = item.get("name") or ""
+                    desc = item.get("description") or ""
+                    url = item.get("url") or item.get("@id") or "https://www.ten-x.com"
+                    addr = item.get("address") or {}
+                    state = addr.get("addressRegion") or ""
+                    if state and state.upper() not in EAST_COAST_STATES:
+                        continue
+                    if not any(kw in (title + desc).lower() for kw in MFG_KEYWORDS):
+                        continue
+                    listings.append(Listing(
+                        source="Ten-X Commercial",
+                        title=title,
+                        url=url,
+                        location=_join(addr.get("addressLocality"), state),
+                        property_type="Commercial Auction / REO",
+                        description=desc[:300],
+                    ))
+            except Exception:
+                pass
+
+        # Fallback: parse visible cards
+        if not listings:
+            for card in soup.select(".listing-card, .property-card, article, .card"):
+                title = _text(card, "h2,h3,h4,[class*='title']")
+                if not title:
+                    continue
+                desc = _text(card, "p,[class*='desc']")
+                loc = _text(card, "[class*='location'],[class*='address'],[class*='city']")
+                if not any(kw in (title + desc).lower() for kw in MFG_KEYWORDS):
+                    continue
+                ec = any(s.lower() in (title + loc).lower()
+                         for s in EAST_COAST_STATES + EAST_COAST_STATE_NAMES)
+                if not ec:
+                    continue
+                link = card.find("a", href=True)
+                href = link["href"] if link else ""
+                listings.append(Listing(
+                    source="Ten-X Commercial",
+                    title=title,
+                    url=href if href.startswith("http") else urllib.parse.urljoin("https://www.ten-x.com", href),
+                    location=loc,
+                    property_type="Commercial Auction / REO",
+                    description=desc[:300],
+                ))
+    except Exception as exc:
+        log.warning("Ten-X: %s", exc)
+
+    log.info("Ten-X: %d listings", len(listings))
+    return listings
+
+
+# ─────────────────────────────────────────────
+# Bid4Assets — government surplus + foreclosure auctions
+# ─────────────────────────────────────────────
+
+def scrape_bid4assets() -> list[Listing]:
+    session = requests.Session()
+    listings: list[Listing] = []
+    try:
+        resp = session.get(
+            "https://www.bid4assets.com/auctions#category=Real%20Estate",
+            headers=HEADERS, timeout=25,
+        )
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        for card in soup.select(".auction-item, .lot-item, .listing, article, .card"):
+            title = _text(card, "h2,h3,h4,[class*='title'],[class*='name']")
+            if not title:
+                continue
+            desc = _text(card, "p,[class*='desc'],[class*='detail']")
+            loc = _text(card, "[class*='location'],[class*='address'],[class*='city']")
+            text_blob = (title + desc + loc).lower()
+
+            if not any(kw in text_blob for kw in MFG_KEYWORDS):
+                continue
+            ec = any(s.lower() in text_blob
+                     for s in EAST_COAST_STATES + [s.lower() for s in EAST_COAST_STATE_NAMES])
+            if not ec:
+                continue
+
+            link = card.find("a", href=True)
+            href = link["href"] if link else ""
+            url = (href if href.startswith("http")
+                   else urllib.parse.urljoin("https://www.bid4assets.com", href))
+            listings.append(Listing(
+                source="Bid4Assets",
+                title=title,
+                url=url,
+                location=loc,
+                property_type="Foreclosure / Government Auction",
+                description=desc[:300],
+            ))
+    except Exception as exc:
+        log.warning("Bid4Assets: %s", exc)
+
+    log.info("Bid4Assets: %d listings", len(listings))
+    return listings
 
 
 # ─────────────────────────────────────────────
 # Hilco Global — industrial liquidations
 # ─────────────────────────────────────────────
 
-_HILCO_URLS = [
-    "https://hilcoglobal.com/service/industrial/",
-    "https://www.hilco.com/services/industrial/",
-]
-
-
 def scrape_hilco() -> list[Listing]:
     session = requests.Session()
     listings: list[Listing] = []
 
-    for base_url in _HILCO_URLS:
+    for base_url in [
+        "https://hilcoglobal.com/service/industrial/",
+        "https://hilcoglobal.com/recent-transactions/",
+    ]:
         try:
             resp = session.get(base_url, headers=HEADERS, timeout=25)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
 
             for item in soup.select(
-                ".auction-item, .event-item, article, "
-                ".listing, .service-item, .project, li.item, .case-study"
+                "article,.card,.item,li.post,"
+                "[class*='project'],[class*='case'],[class*='auction'],"
+                "[class*='listing'],[class*='transaction']"
             ):
-                title = _text(item, "h2, h3, h4, .title, .name")
-                if not title:
+                title = _text(item, "h1,h2,h3,h4,[class*='title'],[class*='name']")
+                if not title or len(title) < 5:
                     continue
-                desc = _text(item, "p, .excerpt, .description")
+                desc = _text(item, "p,[class*='excerpt'],[class*='desc']")
                 if not any(kw in (title + desc).lower() for kw in MFG_KEYWORDS):
                     continue
-
                 link = item.find("a", href=True)
-                href = link["href"] if link else ""
-                url = (href if href.startswith("http")
-                       else urllib.parse.urljoin(base_url, href) if href
-                       else base_url)
-
+                href = (link["href"] if link else "") or ""
                 listings.append(Listing(
                     source="Hilco Global",
                     title=title,
-                    url=url,
-                    location=_text(item, ".location, .address, .city"),
+                    url=(href if href.startswith("http")
+                         else urllib.parse.urljoin(base_url, href) if href else base_url),
+                    location=_text(item, "[class*='location'],[class*='city'],address"),
                     property_type="Industrial Liquidation",
                     description=desc[:300],
                 ))
-
             if listings:
                 break
-
         except Exception as exc:
-            log.debug("Hilco %s failed: %s", base_url, exc)
+            log.debug("Hilco %s: %s", base_url, exc)
 
     log.info("Hilco: %d listings", len(listings))
     return listings
@@ -327,51 +294,146 @@ def scrape_hilco() -> list[Listing]:
 # Tiger Group — industrial auctions
 # ─────────────────────────────────────────────
 
-_TIGER_URLS = [
-    "https://www.tigergroup.com/auctions/",
-    "https://www.tigergroup.com/upcoming-auctions/",
-]
-
-
 def scrape_tiger() -> list[Listing]:
     session = requests.Session()
     listings: list[Listing] = []
 
-    for base_url in _TIGER_URLS:
+    for base_url in ["https://www.tigergroup.com/auctions/", "https://www.tigergroup.com/"]:
         try:
             resp = session.get(base_url, headers=HEADERS, timeout=25)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
-
-            for item in soup.select(".auction, .listing-item, article, .event, .sale-item"):
-                title = _text(item, "h2, h3, h4, .auction-title, .title")
-                if not title:
+            for item in soup.select(
+                "article,.card,[class*='auction'],[class*='listing'],"
+                "[class*='sale'],[class*='event'],li.item"
+            ):
+                title = _text(item, "h1,h2,h3,h4,[class*='title']")
+                if not title or len(title) < 5:
                     continue
-                desc = _text(item, "p, .excerpt, .description")
-                loc = _text(item, ".location, .state, .city, .address")
+                desc = _text(item, "p,[class*='excerpt'],[class*='desc']")
+                loc = _text(item, "[class*='location'],[class*='city'],[class*='state']")
                 if not any(kw in (title + desc + loc).lower() for kw in MFG_KEYWORDS):
                     continue
-
                 link = item.find("a", href=True)
-                href = link["href"] if link else ""
-                url = (href if href.startswith("http")
-                       else urllib.parse.urljoin(base_url, href) if href
-                       else base_url)
-
+                href = (link["href"] if link else "") or ""
                 listings.append(Listing(
                     source="Tiger Group",
                     title=title,
-                    url=url,
+                    url=(href if href.startswith("http")
+                         else urllib.parse.urljoin(base_url, href) if href else base_url),
                     location=loc,
                     property_type="Industrial Liquidation Auction",
                     description=desc[:300],
                 ))
-
         except Exception as exc:
-            log.debug("Tiger %s failed: %s", base_url, exc)
+            log.debug("Tiger %s: %s", base_url, exc)
 
     log.info("Tiger Group: %d listings", len(listings))
     return listings
+
+
+# ─────────────────────────────────────────────
+# Heritage Global — industrial & commercial auctions
+# ─────────────────────────────────────────────
+
+def scrape_heritage() -> list[Listing]:
+    session = requests.Session()
+    listings: list[Listing] = []
+    try:
+        resp = session.get(
+            "https://www.hgp.com/auctions",
+            headers=HEADERS, timeout=25,
+        )
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+        for item in soup.select("article,.auction-card,.card,[class*='auction'],[class*='lot']"):
+            title = _text(item, "h2,h3,h4,[class*='title'],[class*='name']")
+            if not title or len(title) < 5:
+                continue
+            desc = _text(item, "p,[class*='desc'],[class*='excerpt']")
+            if not any(kw in (title + desc).lower() for kw in MFG_KEYWORDS):
+                continue
+            link = item.find("a", href=True)
+            href = (link["href"] if link else "") or ""
+            listings.append(Listing(
+                source="Heritage Global",
+                title=title,
+                url=(href if href.startswith("http")
+                     else urllib.parse.urljoin("https://www.hgp.com", href) if href
+                     else "https://www.hgp.com/auctions"),
+                location=_text(item, "[class*='location'],[class*='city']"),
+                property_type="Industrial / Commercial Auction",
+                description=desc[:300],
+            ))
+    except Exception as exc:
+        log.warning("Heritage Global: %s", exc)
+
+    log.info("Heritage Global: %d listings", len(listings))
+    return listings
+
+
+# ─────────────────────────────────────────────
+# Rabin Worldwide — industrial plant auctions
+# ─────────────────────────────────────────────
+
+def scrape_rabin() -> list[Listing]:
+    session = requests.Session()
+    listings: list[Listing] = []
+    try:
+        resp = session.get(
+            "https://www.rabinworldwide.com/auctions/",
+            headers=HEADERS, timeout=25,
+        )
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "lxml")
+        for item in soup.select("article,.card,[class*='auction'],[class*='listing'],li"):
+            title = _text(item, "h2,h3,h4,[class*='title'],[class*='name']")
+            if not title or len(title) < 5:
+                continue
+            desc = _text(item, "p,[class*='desc']")
+            loc = _text(item, "[class*='location'],[class*='city']")
+            if not any(kw in (title + desc).lower() for kw in MFG_KEYWORDS):
+                continue
+            link = item.find("a", href=True)
+            href = (link["href"] if link else "") or ""
+            listings.append(Listing(
+                source="Rabin Worldwide",
+                title=title,
+                url=(href if href.startswith("http")
+                     else urllib.parse.urljoin("https://www.rabinworldwide.com", href) if href
+                     else "https://www.rabinworldwide.com/auctions/"),
+                location=loc,
+                property_type="Industrial Plant Auction",
+                description=desc[:300],
+            ))
+    except Exception as exc:
+        log.warning("Rabin Worldwide: %s", exc)
+
+    log.info("Rabin Worldwide: %d listings", len(listings))
+    return listings
+
+
+# ─────────────────────────────────────────────
+# Manual search links (rendered as buttons in the digest)
+# Crexi/LoopNet block automated access — these open pre-filtered searches.
+# ─────────────────────────────────────────────
+
+_EC = ",".join(EAST_COAST_STATES)
+
+MANUAL_SEARCH_LINKS = {
+    "Crexi — Industrial EC":
+        f"https://www.crexi.com/properties?types=Industrial&states={_EC}&sort=PublishedDate&sortDirection=Descending",
+    "LoopNet — Industrial EC":
+        "https://www.loopnet.com/search/industrial-properties/east-coast-usa/for-sale/",
+    "CoStar — Industrial EC":
+        "https://www.costar.com/",
+    "CourtListener — Bankruptcy Search":
+        "https://www.courtlistener.com/?type=d&q=manufacturing+industrial&order_by=date_filed+desc",
+    "Auction.com — Commercial":
+        "https://www.auction.com/commercial/",
+    "Ten-X — Commercial Auctions":
+        "https://www.ten-x.com/",
+}
 
 
 # ─────────────────────────────────────────────
@@ -380,39 +442,8 @@ def scrape_tiger() -> list[Listing]:
 
 def _text(tag, selector: str) -> str:
     el = tag.select_one(selector)
-    return el.get_text(strip=True) if el else ""
+    return el.get_text(" ", strip=True) if el else ""
 
 
 def _join(*parts) -> str:
     return ", ".join(p for p in parts if p)
-
-
-def _fmt_price(val) -> str:
-    if val is None:
-        return ""
-    try:
-        n = float(val)
-        if n >= 1_000_000:
-            return f"${n / 1_000_000:.2f}M"
-        if n >= 1_000:
-            return f"${n / 1_000:.0f}K"
-        return f"${n:,.0f}"
-    except (ValueError, TypeError):
-        return str(val)
-
-
-def _fmt_sf(val) -> str:
-    if val is None:
-        return ""
-    try:
-        return f"{int(float(val)):,} SF"
-    except (ValueError, TypeError):
-        return str(val)
-
-
-def _deep_get(d, *keys):
-    for k in keys:
-        if not isinstance(d, dict):
-            return None
-        d = d.get(k)
-    return d

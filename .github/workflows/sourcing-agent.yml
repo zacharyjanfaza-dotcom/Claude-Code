@@ -18,11 +18,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Python dependencies
+      - name: Install dependencies
         run: pip install -r agent/requirements.txt
-
-      - name: Install Playwright browser
-        run: playwright install chromium --with-deps
 
       - name: Run sourcing agent
         run: python agent/main.py

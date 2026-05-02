@@ -1,0 +1,30 @@
+name: WSV Sourcing Agent
+
+on:
+  schedule:
+    - cron: "0 12 * * 1"   # Every Monday at 12pm UTC (8am ET)
+  workflow_dispatch:         # Manual "Run workflow" button in GitHub UI
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r agent/requirements.txt
+
+      - name: Run sourcing agent
+        run: python agent/main.py
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          DIGEST_TO: ${{ secrets.DIGEST_TO }}

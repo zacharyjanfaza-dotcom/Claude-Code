@@ -13,7 +13,7 @@ mobileMenu.querySelectorAll('a').forEach(link => {
 });
 
 // Fade-in on scroll
-const fadeEls = document.querySelectorAll('.bio-card, .section-header, .contact__inner');
+const fadeEls = document.querySelectorAll('.bio-card, .section-header, .contact__inner, .about__focus-item');
 fadeEls.forEach(el => el.classList.add('fade-in'));
 
 const observer = new IntersectionObserver(

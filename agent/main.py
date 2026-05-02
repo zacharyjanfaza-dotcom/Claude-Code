@@ -18,10 +18,10 @@ from dotenv import load_dotenv
 import anthropic
 
 from scraper import (
-    scrape_courtlistener,
     scrape_edgar,
     scrape_bid4assets,
     scrape_tiger,
+    scrape_justia,
     MANUAL_SEARCH_LINKS,
 )
 from analyzer import analyze_listings
@@ -37,10 +37,10 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 SCRAPERS = [
-    ("CourtListener", scrape_courtlistener),
-    ("SEC EDGAR",     scrape_edgar),
-    ("Bid4Assets",    scrape_bid4assets),
-    ("Tiger Group",   scrape_tiger),
+    ("SEC EDGAR",   scrape_edgar),
+    ("Bid4Assets",  scrape_bid4assets),
+    ("Tiger Group", scrape_tiger),
+    ("Justia",      scrape_justia),
 ]
 
 
@@ -65,24 +65,25 @@ def run_diagnose() -> None:
         )
     }
 
-    # 1. CourtListener HTML probe
-    print("\n═══ CourtListener HTML Search ═══")
-    for term in ["manufacturing bankruptcy", "industrial facility chapter 11"]:
-        try:
-            r = req.get(
-                "https://www.courtlistener.com/",
-                params={"q": term, "type": "d", "order_by": "date_filed desc"},
-                headers=headers,
-                timeout=15,
-            )
-            soup = BS(r.text, "lxml")
-            all_links = soup.find_all("a", href=True)
-            docket_links = [a for a in all_links if "/docket/" in a.get("href", "")]
-            print(f"  q={term!r} → HTTP {r.status_code}, total links: {len(all_links)}, /docket/ links: {len(docket_links)}")
-            for a in docket_links[:3]:
-                print(f"    • {a.get_text(strip=True)[:80]} → {a['href'][:60]}")
-        except Exception as exc:
-            print(f"  q={term!r} → ERROR: {exc}")
+    # 1. EDGAR date-filtered probe
+    print("\n═══ SEC EDGAR (date-filtered) ═══")
+    from datetime import date, timedelta
+    ninety_ago = (date.today() - timedelta(days=90)).isoformat()
+    try:
+        r = req.get(
+            "https://efts.sec.gov/LATEST/search-index",
+            params={"q": '"chapter 11" "manufacturing"', "forms": "8-K",
+                    "dateRange": "custom", "startdt": ninety_ago},
+            headers={**headers, "Accept": "application/json"}, timeout=15,
+        )
+        hits = r.json().get("hits", {}).get("hits") or []
+        recent = [h for h in hits if (h.get("_source") or {}).get("file_date", "") >= ninety_ago]
+        print(f"  HTTP {r.status_code}, total hits: {len(hits)}, hits >= {ninety_ago}: {len(recent)}")
+        for h in recent[:3]:
+            src = h.get("_source") or {}
+            print(f"    • {src.get('display_names') or src.get('entity_name')} ({src.get('file_date','')})")
+    except Exception as exc:
+        print(f"  ERROR: {exc}")
 
     # 2. HTML site probes
     # EDGAR probe
@@ -102,9 +103,9 @@ def run_diagnose() -> None:
         print(f"  ERROR: {exc}")
 
     sites = [
-        ("CourtListener docket links", "https://www.courtlistener.com/?q=manufacturing+bankruptcy&type=d&order_by=date_filed+desc"),
-        ("Tiger Group",                "https://www.tigergroup.com/auctions/"),
-        ("Bid4Assets",                 "https://www.bid4assets.com/"),
+        ("Justia Bankruptcy",  "https://dockets.justia.com/search?query=manufacturing+industrial&court_type=bk&sort=date_filed&order=desc"),
+        ("Tiger Group",        "https://www.tigergroup.com/auctions/"),
+        ("Bid4Assets homepage", "https://www.bid4assets.com/"),
     ]
     for name, url in sites:
         print(f"\n═══ {name} ({url}) ═══")

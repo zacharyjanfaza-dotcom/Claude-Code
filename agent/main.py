@@ -18,10 +18,10 @@ from dotenv import load_dotenv
 import anthropic
 
 from scraper import (
+    scrape_google_news,
     scrape_edgar,
     scrape_bid4assets,
     scrape_tiger,
-    scrape_justia,
     MANUAL_SEARCH_LINKS,
 )
 from analyzer import analyze_listings
@@ -37,10 +37,10 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 SCRAPERS = [
+    ("Google News", scrape_google_news),
     ("SEC EDGAR",   scrape_edgar),
     ("Bid4Assets",  scrape_bid4assets),
     ("Tiger Group", scrape_tiger),
-    ("Justia",      scrape_justia),
 ]
 
 

@@ -19,11 +19,9 @@ import anthropic
 
 from scraper import (
     scrape_courtlistener,
+    scrape_edgar,
     scrape_bid4assets,
-    scrape_hilco,
     scrape_tiger,
-    scrape_heritage,
-    scrape_gordon_brothers,
     MANUAL_SEARCH_LINKS,
 )
 from analyzer import analyze_listings
@@ -39,12 +37,10 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 SCRAPERS = [
-    ("CourtListener",   scrape_courtlistener),
-    ("Bid4Assets",      scrape_bid4assets),
-    ("Hilco Global",    scrape_hilco),
-    ("Tiger Group",     scrape_tiger),
-    ("Heritage Global", scrape_heritage),
-    ("Gordon Brothers", scrape_gordon_brothers),
+    ("CourtListener", scrape_courtlistener),
+    ("SEC EDGAR",     scrape_edgar),
+    ("Bid4Assets",    scrape_bid4assets),
+    ("Tiger Group",   scrape_tiger),
 ]
 
 
@@ -71,7 +67,7 @@ def run_diagnose() -> None:
 
     # 1. CourtListener HTML probe
     print("\n═══ CourtListener HTML Search ═══")
-    for term in ["manufacturing bankruptcy", "industrial facility bankruptcy"]:
+    for term in ["manufacturing bankruptcy", "industrial facility chapter 11"]:
         try:
             r = req.get(
                 "https://www.courtlistener.com/",
@@ -80,21 +76,35 @@ def run_diagnose() -> None:
                 timeout=15,
             )
             soup = BS(r.text, "lxml")
-            results = soup.select("article, .result, [class*='search-result']")
-            print(f"  q={term!r} → HTTP {r.status_code}, result blocks found: {len(results)}")
-            for res in results[:2]:
-                title = res.select_one("h3 a, h4 a, a[href*='/docket/']")
-                print(f"    • {title.get_text(strip=True) if title else '(no title found)'}")
+            all_links = soup.find_all("a", href=True)
+            docket_links = [a for a in all_links if "/docket/" in a.get("href", "")]
+            print(f"  q={term!r} → HTTP {r.status_code}, total links: {len(all_links)}, /docket/ links: {len(docket_links)}")
+            for a in docket_links[:3]:
+                print(f"    • {a.get_text(strip=True)[:80]} → {a['href'][:60]}")
         except Exception as exc:
             print(f"  q={term!r} → ERROR: {exc}")
 
     # 2. HTML site probes
+    # EDGAR probe
+    print("\n═══ SEC EDGAR Full-Text Search ═══")
+    try:
+        r = req.get(
+            "https://efts.sec.gov/LATEST/search-index",
+            params={"q": '"chapter 11" "manufacturing facility"', "forms": "8-K", "dateRange": "custom", "startdt": "2025-01-01"},
+            headers={**headers, "Accept": "application/json"}, timeout=15,
+        )
+        hits = r.json().get("hits", {}).get("hits") or []
+        print(f"  HTTP {r.status_code}, hits: {len(hits)}")
+        for h in hits[:3]:
+            src = h.get("_source") or {}
+            print(f"    • {src.get('entity_name') or src.get('display_names', '?')} ({src.get('file_date','')})")
+    except Exception as exc:
+        print(f"  ERROR: {exc}")
+
     sites = [
-        ("Hilco Global",    "https://hilcoglobal.com/real-estate/"),
-        ("Tiger Group",     "https://www.tigergroup.com/auctions/"),
-        ("Heritage Global", "https://www.hgp.com/transactions/"),
-        ("Gordon Brothers", "https://www.gordonbrothers.com/services/assets/"),
-        ("Bid4Assets",      "https://www.bid4assets.com/"),
+        ("CourtListener docket links", "https://www.courtlistener.com/?q=manufacturing+bankruptcy&type=d&order_by=date_filed+desc"),
+        ("Tiger Group",                "https://www.tigergroup.com/auctions/"),
+        ("Bid4Assets",                 "https://www.bid4assets.com/"),
     ]
     for name, url in sites:
         print(f"\n═══ {name} ({url}) ═══")

@@ -6,7 +6,7 @@ listings for manufacturing facilities, then emails a digest.
 
 Usage:
   python main.py                  # run now
-  python main.py --dry-run        # print digest HTML, don't send email
+  python main.py --dry-run        # save digest_preview.html, no email sent
 """
 
 import argparse
@@ -18,7 +18,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import anthropic
 
-from scraper import scrape_crexi, scrape_bankruptcydata, scrape_hilco, scrape_tiger
+from scraper import scrape_crexi, scrape_courtlistener, scrape_hilco, scrape_tiger
 from analyzer import analyze_listings
 from emailer import send_digest, build_html
 
@@ -30,6 +30,16 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
+
+
+def _safe_scrape(name: str, fn) -> tuple[list, str | None]:
+    """Run a scraper and return (listings, error_message)."""
+    try:
+        results = fn()
+        return results, None
+    except Exception as exc:
+        log.error("%s scraper crashed: %s", name, exc)
+        return [], str(exc)
 
 
 def main(dry_run: bool = False) -> None:
@@ -48,24 +58,27 @@ def main(dry_run: bool = False) -> None:
     # ── 1. Scrape ─────────────────────────────
     log.info("Starting scrape run")
     all_listings = []
+    scraper_status = {}
 
-    log.info("Scraping Crexi…")
-    all_listings += scrape_crexi()
-
-    log.info("Scraping BankruptcyData.com…")
-    all_listings += scrape_bankruptcydata()
-
-    log.info("Scraping Hilco Industrial…")
-    all_listings += scrape_hilco()
-
-    log.info("Scraping Tiger Group…")
-    all_listings += scrape_tiger()
+    for name, fn in [
+        ("Crexi", scrape_crexi),
+        ("CourtListener", scrape_courtlistener),
+        ("Hilco", scrape_hilco),
+        ("Tiger Group", scrape_tiger),
+    ]:
+        log.info("Scraping %s…", name)
+        results, err = _safe_scrape(name, fn)
+        all_listings += results
+        scraper_status[name] = f"{len(results)} listings" if err is None else f"ERROR: {err[:120]}"
 
     log.info("Total raw listings collected: %d", len(all_listings))
+    for name, status in scraper_status.items():
+        log.info("  %-20s %s", name, status)
 
     # ── 2. Analyze with Claude ─────────────────
-    log.info("Analyzing with Claude (%s)…", "claude-opus-4-7")
+    log.info("Analyzing with Claude…")
     analysis = analyze_listings(all_listings, client)
+    analysis["_scraper_status"] = scraper_status  # pass through for email footer
 
     # ── 3. Send / preview ─────────────────────
     if dry_run:
@@ -74,7 +87,7 @@ def main(dry_run: bool = False) -> None:
         log.info("Dry run: digest saved to %s", out_path)
         print(f"\nSummary:\n{analysis.get('summary', '')}")
         print(f"\nTop industrial listings: {len(analysis.get('top_industrial', []))}")
-        print(f"Top bankruptcy listings: {len(analysis.get('top_bankruptcy', []))}")
+        print(f"Top bankruptcy listings:  {len(analysis.get('top_bankruptcy', []))}")
     else:
         send_digest(
             analysis=analysis,

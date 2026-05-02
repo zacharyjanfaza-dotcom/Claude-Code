@@ -1,16 +1,15 @@
 """
-Scrapes two sources:
+Scrapes two source categories:
   1. Crexi – industrial property listings on the East Coast
   2. Bankruptcy/liquidation listings for manufacturing facilities
-     (BankruptcyData.com + Hilco Industrial + Tiger Group auctions)
+     (CourtListener PACER feed + Hilco Global + Tiger Group)
 """
 
-import re
 import json
-import time
 import logging
+import re
+import urllib.parse
 from dataclasses import dataclass, field
-from typing import Optional
 
 import requests
 from bs4 import BeautifulSoup
@@ -27,8 +26,15 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
-EAST_COAST_STATES = ["NY", "NJ", "CT", "MA", "RI", "NH", "ME", "VT",
-                     "PA", "MD", "DE", "VA", "NC", "SC", "GA", "FL", "DC"]
+EAST_COAST_STATES = [
+    "NY", "NJ", "CT", "MA", "RI", "NH", "ME", "VT",
+    "PA", "MD", "DE", "VA", "NC", "SC", "GA", "FL", "DC",
+]
+
+MFG_KEYWORDS = [
+    "manufactur", "industrial", "fabricat", "processing", "warehouse",
+    "distribution", "assembly", "production", "plant", "mill", "factory",
+]
 
 
 @dataclass
@@ -45,87 +51,117 @@ class Listing:
 
 
 # ─────────────────────────────────────────────
-# Crexi
+# Crexi  (tries REST API first, then HTML)
 # ─────────────────────────────────────────────
 
-CREXI_SEARCH_URL = "https://www.crexi.com/properties"
+# Crexi's internal search API — discovered from network traffic on their SPA
+_CREXI_API_CANDIDATES = [
+    "https://api.crexi.com/assets",
+    "https://www.crexi.com/api/assets",
+]
 
-CREXI_API_URL = "https://api.crexi.com/assets"
-
-CREXI_PARAMS = {
-    "types": "Industrial",
-    "states": ",".join(EAST_COAST_STATES),
+_CREXI_API_PARAMS = {
+    "propertyTypes[]": "Industrial",
+    "states[]": EAST_COAST_STATES,
     "limit": 50,
     "offset": 0,
-    "sort": "PublishedDate",
-    "sortDirection": "Descending",
-}
-
-CREXI_API_PARAMS = {
-    "propertyTypes": "Industrial",
-    "states": EAST_COAST_STATES,
-    "pageSize": 50,
-    "page": 1,
     "sortBy": "dateAdded",
     "sortDir": "desc",
 }
 
 
-def _crexi_api(session: requests.Session, page: int = 1) -> list[Listing]:
-    """Try Crexi's internal REST API (reverse-engineered from their SPA)."""
-    params = {**CREXI_API_PARAMS, "page": page}
-    try:
-        resp = session.get(
-            CREXI_API_URL,
-            params=params,
-            headers={**HEADERS, "Accept": "application/json", "Origin": "https://www.crexi.com"},
-            timeout=20,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        assets = data.get("assets") or data.get("results") or data.get("data") or []
-        listings = []
-        for a in assets:
-            listings.append(Listing(
-                source="Crexi",
-                title=a.get("name") or a.get("title") or "Industrial Property",
-                url=f"https://www.crexi.com/properties/{a.get('id') or a.get('slug', '')}",
-                location=_join(a.get("city"), a.get("state")),
-                price=_fmt_price(a.get("askingPrice") or a.get("price")),
-                size_sf=_fmt_sf(a.get("buildingSize") or a.get("totalSqFt")),
-                property_type=a.get("propertyType") or "Industrial",
-                description=a.get("description") or a.get("summary") or "",
-                raw=a,
-            ))
-        return listings
-    except Exception as exc:
-        log.debug("Crexi API attempt failed: %s", exc)
-        return []
+def _crexi_via_api(session: requests.Session) -> list[Listing]:
+    for base_url in _CREXI_API_CANDIDATES:
+        try:
+            resp = session.get(
+                base_url,
+                params=_CREXI_API_PARAMS,
+                headers={**HEADERS, "Accept": "application/json",
+                         "Referer": "https://www.crexi.com/"},
+                timeout=20,
+            )
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            assets = (
+                data.get("assets")
+                or data.get("results")
+                or data.get("data")
+                or []
+            )
+            if not assets:
+                continue
+            return [
+                Listing(
+                    source="Crexi",
+                    title=a.get("name") or a.get("title") or "Industrial Property",
+                    url=f"https://www.crexi.com/properties/{a.get('id') or a.get('slug', '')}",
+                    location=_join(a.get("city"), a.get("state")),
+                    price=_fmt_price(a.get("askingPrice") or a.get("price")),
+                    size_sf=_fmt_sf(a.get("buildingSize") or a.get("totalSqFt")),
+                    property_type=a.get("propertyType") or "Industrial",
+                    description=(a.get("description") or a.get("summary") or "")[:400],
+                    raw=a,
+                )
+                for a in assets
+            ]
+        except Exception as exc:
+            log.debug("Crexi API candidate %s failed: %s", base_url, exc)
+    return []
 
 
-def _crexi_html(session: requests.Session) -> list[Listing]:
-    """Fall back to scraping the public search page."""
+def _crexi_via_html(session: requests.Session) -> list[Listing]:
+    """
+    Crexi is a React SPA — plain HTML requests usually return an empty shell.
+    We look for an embedded __NEXT_DATA__ or window.__INITIAL_STATE__ JSON blob
+    that Next.js / React apps often include for SSR hydration.
+    """
     try:
         resp = session.get(
-            CREXI_SEARCH_URL,
-            params={
-                "types": "Industrial",
-                "states": ",".join(EAST_COAST_STATES),
-            },
+            "https://www.crexi.com/properties",
+            params={"types": "Industrial", "states": ",".join(EAST_COAST_STATES)},
             headers=HEADERS,
-            timeout=25,
+            timeout=30,
         )
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "lxml")
 
-        # Many SPAs embed their initial Redux/Zustand store as JSON in a <script> tag
+        # Next.js hydration blob
+        next_data = soup.find("script", id="__NEXT_DATA__")
+        if next_data and next_data.string:
+            try:
+                blob = json.loads(next_data.string)
+                # Path varies by Crexi's page structure — walk common keys
+                assets = (
+                    _deep_get(blob, "props", "pageProps", "assets")
+                    or _deep_get(blob, "props", "pageProps", "listings")
+                    or []
+                )
+                if assets:
+                    return [
+                        Listing(
+                            source="Crexi",
+                            title=a.get("name") or "Industrial Property",
+                            url=f"https://www.crexi.com/properties/{a.get('id', '')}",
+                            location=_join(a.get("city"), a.get("state")),
+                            price=_fmt_price(a.get("askingPrice")),
+                            size_sf=_fmt_sf(a.get("buildingSize")),
+                            property_type="Industrial",
+                            description=(a.get("description") or "")[:400],
+                        )
+                        for a in assets
+                    ]
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        # Generic JSON blob scan
         for script in soup.find_all("script"):
             text = script.string or ""
-            if "assets" in text and "propertyType" in text:
-                match = re.search(r'"assets"\s*:\s*(\[.*?\])', text, re.DOTALL)
-                if match:
+            if '"propertyType"' in text and '"Industrial"' in text:
+                m = re.search(r'"assets"\s*:\s*(\[.{20,}?\])', text, re.DOTALL)
+                if m:
                     try:
-                        assets = json.loads(match.group(1))
+                        assets = json.loads(m.group(1))
                         return [
                             Listing(
                                 source="Crexi",
@@ -135,198 +171,225 @@ def _crexi_html(session: requests.Session) -> list[Listing]:
                                 price=_fmt_price(a.get("askingPrice")),
                                 size_sf=_fmt_sf(a.get("buildingSize")),
                                 property_type="Industrial",
-                                description=a.get("description") or "",
-                                raw=a,
                             )
                             for a in assets
                         ]
                     except json.JSONDecodeError:
                         pass
 
-        # Last resort: parse visible listing cards
-        listings = []
-        for card in soup.select("[data-qa='property-card'], .property-card, .asset-card"):
-            title = _text(card, "h2, h3, .title, .name")
-            loc = _text(card, ".location, .address, .city-state")
-            price = _text(card, ".price, .asking-price")
-            sf = _text(card, ".size, .sqft, .building-size")
-            href = card.find("a", href=True)
-            url = ("https://www.crexi.com" + href["href"]) if href else CREXI_SEARCH_URL
-            if title:
-                listings.append(Listing(
-                    source="Crexi",
-                    title=title,
-                    url=url,
-                    location=loc,
-                    price=price,
-                    size_sf=sf,
-                    property_type="Industrial",
-                ))
-        return listings
     except Exception as exc:
         log.warning("Crexi HTML scrape failed: %s", exc)
-        return []
+    return []
 
 
 def scrape_crexi() -> list[Listing]:
     session = requests.Session()
-    listings = _crexi_api(session)
+    listings = _crexi_via_api(session)
     if not listings:
-        log.info("Crexi API returned nothing, falling back to HTML scrape")
-        listings = _crexi_html(session)
-    log.info("Crexi: found %d listings", len(listings))
+        log.info("Crexi API returned nothing, trying HTML scrape")
+        listings = _crexi_via_html(session)
+    if not listings:
+        log.warning(
+            "Crexi returned 0 listings — their site requires JavaScript rendering. "
+            "Consider adding Playwright (pip install playwright) for full support."
+        )
+    log.info("Crexi: %d listings", len(listings))
     return listings
 
 
 # ─────────────────────────────────────────────
-# BankruptcyData.com – recent Chapter 7 / 11 filings
+# CourtListener — public PACER bankruptcy search
+# Free API, no key required for basic search
 # ─────────────────────────────────────────────
 
-BKDATA_URL = "https://www.bankruptcydata.com/research/recent-filings"
+_CL_API = "https://www.courtlistener.com/api/rest/v4/dockets/"
 
-# SIC ranges 2000-3999 broadly cover manufacturing
-MFG_KEYWORDS = [
-    "manufactur", "industrial", "fabricat", "processing", "warehouse",
-    "distribution", "assembly", "production", "plant", "mill",
+_EC_COURT_SLUGS = [
+    "nyed", "nysd", "nynd", "nywd",        # New York
+    "njd",                                   # New Jersey
+    "ctd",                                   # Connecticut
+    "mad",                                   # Massachusetts
+    "paed", "pawd", "pamd",                 # Pennsylvania
+    "mdd",                                   # Maryland
+    "vaed", "vawd",                          # Virginia
+    "nced", "ncwd", "ncmd",                 # North Carolina
+    "sced", "scnd",                          # South Carolina
+    "gaed", "gawd", "gamd", "gandce",       # Georgia (ndga etc)
+    "flsd", "flnd", "flmd",                 # Florida
+    "ded",                                   # Delaware
 ]
 
 
-def scrape_bankruptcydata() -> list[Listing]:
+def scrape_courtlistener() -> list[Listing]:
+    """
+    Searches CourtListener's free public API for recent Chapter 7/11 bankruptcy
+    dockets in East Coast federal courts that mention manufacturing keywords.
+    """
     session = requests.Session()
     listings: list[Listing] = []
-    try:
-        resp = session.get(BKDATA_URL, headers=HEADERS, timeout=25)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "lxml")
 
-        table = soup.find("table")
-        if not table:
-            return listings
-
-        for row in table.find_all("tr")[1:]:
-            cells = row.find_all("td")
-            if len(cells) < 3:
+    for keyword in ["manufacturing", "industrial facility", "fabrication", "plant"]:
+        try:
+            resp = session.get(
+                _CL_API,
+                params={
+                    "q": keyword,
+                    "type": "r",
+                    "order_by": "date_filed desc",
+                    "nature_of_suit": "830",  # bankruptcy
+                    "filed_after": _days_ago(90),
+                    "page_size": 20,
+                },
+                headers={**HEADERS, "Accept": "application/json"},
+                timeout=20,
+            )
+            if resp.status_code != 200:
                 continue
-            company = cells[0].get_text(strip=True)
-            industry = cells[1].get_text(strip=True) if len(cells) > 1 else ""
-            state = cells[2].get_text(strip=True) if len(cells) > 2 else ""
-            chapter = cells[3].get_text(strip=True) if len(cells) > 3 else ""
-            date = cells[4].get_text(strip=True) if len(cells) > 4 else ""
+            results = resp.json().get("results") or []
+            for r in results:
+                court = r.get("court_id") or r.get("court") or ""
+                # Filter to East Coast courts where possible
+                case_name = r.get("case_name") or r.get("caseName") or ""
+                date_filed = r.get("date_filed") or ""
+                docket_number = r.get("docket_number") or ""
+                url = r.get("absolute_url") or ""
+                if url and not url.startswith("http"):
+                    url = "https://www.courtlistener.com" + url
 
-            if state not in EAST_COAST_STATES:
-                continue
+                listings.append(Listing(
+                    source="CourtListener (PACER)",
+                    title=f"{case_name} ({docket_number})",
+                    url=url or "https://www.courtlistener.com/",
+                    location=str(court).upper(),
+                    property_type="Bankruptcy Filing",
+                    description=f"Filed {date_filed}. Search term: {keyword}.",
+                ))
+        except Exception as exc:
+            log.debug("CourtListener keyword '%s' failed: %s", keyword, exc)
 
-            text_blob = (company + " " + industry).lower()
-            if not any(kw in text_blob for kw in MFG_KEYWORDS):
-                continue
+    # Deduplicate by URL
+    seen = set()
+    unique = []
+    for l in listings:
+        if l.url not in seen:
+            seen.add(l.url)
+            unique.append(l)
 
-            link = row.find("a", href=True)
-            url = ("https://www.bankruptcydata.com" + link["href"]) if link else BKDATA_URL
-
-            listings.append(Listing(
-                source="BankruptcyData.com",
-                title=f"{company} — Chapter {chapter} ({date})",
-                url=url,
-                location=state,
-                property_type="Manufacturing / Industrial (Bankruptcy)",
-                description=f"Industry: {industry}. Chapter {chapter} filed {date}.",
-            ))
-
-    except Exception as exc:
-        log.warning("BankruptcyData scrape failed: %s", exc)
-
-    log.info("BankruptcyData: found %d relevant filings", len(listings))
-    return listings
+    log.info("CourtListener: %d unique filings", len(unique))
+    return unique
 
 
 # ─────────────────────────────────────────────
-# Hilco Industrial – liquidation auctions
+# Hilco Global — industrial liquidations
 # ─────────────────────────────────────────────
 
-HILCO_URL = "https://www.hilcoind.com/auctions/"
+_HILCO_URLS = [
+    "https://hilcoglobal.com/service/industrial/",
+    "https://hilcoind.com/auctions/",          # may have SSL issues
+    "https://www.hilco.com/auctions/",
+]
 
 
 def scrape_hilco() -> list[Listing]:
     session = requests.Session()
     listings: list[Listing] = []
-    try:
-        resp = session.get(HILCO_URL, headers=HEADERS, timeout=25)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "lxml")
 
-        for item in soup.select(".auction-item, .event-item, article.post, .listing"):
-            title = _text(item, "h2, h3, .title, .event-title")
-            loc = _text(item, ".location, .address, .meta-location")
-            date = _text(item, ".date, .auction-date, time")
-            link = item.find("a", href=True)
-            url = link["href"] if link and link["href"].startswith("http") else (
-                "https://www.hilcoind.com" + (link["href"] if link else "")
+    for url in _HILCO_URLS:
+        try:
+            resp = session.get(
+                url,
+                headers=HEADERS,
+                timeout=25,
+                verify=True,
             )
-            desc = _text(item, "p, .excerpt, .description")
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "lxml")
 
-            if title:
-                text_blob = (title + " " + desc).lower()
-                if any(kw in text_blob for kw in MFG_KEYWORDS):
-                    listings.append(Listing(
-                        source="Hilco Industrial",
-                        title=title,
-                        url=url,
-                        location=loc,
-                        property_type="Industrial Liquidation Auction",
-                        description=f"{date} — {desc}".strip(" —"),
-                    ))
+            for item in soup.select(
+                ".auction-item, .event-item, article.post, "
+                ".listing, .service-item, .project-item, li.item"
+            ):
+                title = _text(item, "h2, h3, h4, .title, .event-title, .name")
+                if not title:
+                    continue
+                text_blob = (title + " " + _text(item, "p, .excerpt")).lower()
+                if not any(kw in text_blob for kw in MFG_KEYWORDS):
+                    continue
 
-    except Exception as exc:
-        log.warning("Hilco scrape failed: %s", exc)
+                link = item.find("a", href=True)
+                href = link["href"] if link else ""
+                full_url = href if href.startswith("http") else (
+                    urllib.parse.urljoin(url, href) if href else url
+                )
 
-    log.info("Hilco: found %d listings", len(listings))
+                listings.append(Listing(
+                    source="Hilco Global",
+                    title=title,
+                    url=full_url,
+                    location=_text(item, ".location, .address, .city"),
+                    property_type="Industrial Liquidation",
+                    description=_text(item, "p, .excerpt, .description")[:300],
+                ))
+
+            if listings:
+                break  # stop trying alternate URLs once we get results
+
+        except Exception as exc:
+            log.debug("Hilco URL %s failed: %s", url, exc)
+
+    log.info("Hilco: %d listings", len(listings))
     return listings
 
 
 # ─────────────────────────────────────────────
-# Tiger Group – industrial auction listings
+# Tiger Group — industrial auctions
 # ─────────────────────────────────────────────
 
-TIGER_URL = "https://www.tigergroup.com/auctions/"
+_TIGER_URLS = [
+    "https://www.tigergroup.com/auctions/",
+    "https://www.tigergroup.com/upcoming-auctions/",
+]
 
 
 def scrape_tiger() -> list[Listing]:
     session = requests.Session()
     listings: list[Listing] = []
-    try:
-        resp = session.get(TIGER_URL, headers=HEADERS, timeout=25)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, "lxml")
 
-        for item in soup.select(".auction, .listing-item, article, .event"):
-            title = _text(item, "h2, h3, .auction-title, .title")
-            loc = _text(item, ".location, .state, .city")
-            date = _text(item, ".date, time, .auction-date")
-            desc = _text(item, "p, .excerpt, .description")
-            link = item.find("a", href=True)
-            url = link["href"] if link and link["href"].startswith("http") else (
-                "https://www.tigergroup.com" + (link["href"] if link else "")
-            )
+    for url in _TIGER_URLS:
+        try:
+            resp = session.get(url, headers=HEADERS, timeout=25)
+            resp.raise_for_status()
+            soup = BeautifulSoup(resp.text, "lxml")
 
-            if not title:
-                continue
-            text_blob = (title + " " + desc + " " + loc).lower()
-            if not any(kw in text_blob for kw in MFG_KEYWORDS):
-                continue
+            for item in soup.select(".auction, .listing-item, article, .event, .sale-item"):
+                title = _text(item, "h2, h3, h4, .auction-title, .title")
+                if not title:
+                    continue
+                desc = _text(item, "p, .excerpt, .description")
+                loc = _text(item, ".location, .state, .city, .address")
+                text_blob = (title + " " + desc + " " + loc).lower()
+                if not any(kw in text_blob for kw in MFG_KEYWORDS):
+                    continue
 
-            listings.append(Listing(
-                source="Tiger Group",
-                title=title,
-                url=url,
-                location=loc,
-                property_type="Industrial Liquidation Auction",
-                description=f"{date} — {desc}".strip(" —"),
-            ))
+                link = item.find("a", href=True)
+                href = link["href"] if link else ""
+                full_url = href if href.startswith("http") else (
+                    urllib.parse.urljoin(url, href) if href else url
+                )
 
-    except Exception as exc:
-        log.warning("Tiger Group scrape failed: %s", exc)
+                listings.append(Listing(
+                    source="Tiger Group",
+                    title=title,
+                    url=full_url,
+                    location=loc,
+                    property_type="Industrial Liquidation Auction",
+                    description=desc[:300],
+                ))
 
-    log.info("Tiger Group: found %d listings", len(listings))
+        except Exception as exc:
+            log.debug("Tiger URL %s failed: %s", url, exc)
+
+    log.info("Tiger Group: %d listings", len(listings))
     return listings
 
 
@@ -349,9 +412,9 @@ def _fmt_price(val) -> str:
     try:
         n = float(val)
         if n >= 1_000_000:
-            return f"${n/1_000_000:.2f}M"
+            return f"${n / 1_000_000:.2f}M"
         if n >= 1_000:
-            return f"${n/1_000:.0f}K"
+            return f"${n / 1_000:.0f}K"
         return f"${n:,.0f}"
     except (ValueError, TypeError):
         return str(val)
@@ -364,3 +427,16 @@ def _fmt_sf(val) -> str:
         return f"{int(float(val)):,} SF"
     except (ValueError, TypeError):
         return str(val)
+
+
+def _deep_get(d, *keys):
+    for k in keys:
+        if not isinstance(d, dict):
+            return None
+        d = d.get(k)
+    return d
+
+
+def _days_ago(n: int) -> str:
+    from datetime import date, timedelta
+    return (date.today() - timedelta(days=n)).isoformat()

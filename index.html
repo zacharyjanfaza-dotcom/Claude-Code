@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Walker Street Ventures | Real Estate</title>
+  <title>Walker Street Ventures</title>
   <link rel="stylesheet" href="styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
@@ -18,343 +18,122 @@
         <span class="nav__logo-text">Walker Street Ventures</span>
       </a>
       <ul class="nav__links">
-        <li><a href="#about">About</a></li>
-        <li><a href="#services">Services</a></li>
-        <li><a href="#properties">Properties</a></li>
-        <li><a href="#contact" class="nav__cta">Contact Us</a></li>
+        <li><a href="#team">Team</a></li>
+        <li><a href="#contact" class="nav__cta">Contact</a></li>
       </ul>
       <button class="nav__hamburger" id="hamburger" aria-label="Toggle menu">
         <span></span><span></span><span></span>
       </button>
     </div>
     <div class="nav__mobile" id="mobileMenu">
-      <a href="#about">About</a>
-      <a href="#services">Services</a>
-      <a href="#properties">Properties</a>
-      <a href="#contact">Contact Us</a>
+      <a href="#team">Team</a>
+      <a href="#contact">Contact</a>
     </div>
   </nav>
 
   <!-- Hero -->
-  <section class="hero" id="home">
-    <div class="hero__bg"></div>
-    <div class="hero__overlay"></div>
+  <section class="hero">
     <div class="hero__content">
-      <p class="hero__eyebrow">Premium Real Estate</p>
-      <h1 class="hero__headline">Where Vision Meets<br/>Prime Real Estate</h1>
-      <p class="hero__sub">Walker Street Ventures acquires, develops, and manages exceptional properties across residential, commercial, and mixed-use markets.</p>
-      <div class="hero__actions">
-        <a href="#properties" class="btn btn--primary">View Properties</a>
-        <a href="#about" class="btn btn--ghost">Our Story</a>
-      </div>
-    </div>
-    <div class="hero__stats">
-      <div class="hero__stat">
-        <span class="hero__stat-num">$2.4B+</span>
-        <span class="hero__stat-label">Assets Under Management</span>
-      </div>
-      <div class="hero__stat">
-        <span class="hero__stat-num">180+</span>
-        <span class="hero__stat-label">Properties Acquired</span>
-      </div>
-      <div class="hero__stat">
-        <span class="hero__stat-num">15+</span>
-        <span class="hero__stat-label">Years of Excellence</span>
-      </div>
+      <p class="hero__eyebrow">Real Estate</p>
+      <h1 class="hero__headline">Walker Street Ventures</h1>
+      <p class="hero__sub">A real estate venture based in New York City.</p>
     </div>
   </section>
 
-  <!-- About -->
-  <section class="about" id="about">
-    <div class="container">
-      <div class="about__grid">
-        <div class="about__visual">
-          <div class="about__img-wrap">
-            <div class="about__img about__img--main"></div>
-            <div class="about__img about__img--accent"></div>
-          </div>
-          <div class="about__badge">
-            <span class="about__badge-num">15+</span>
-            <span class="about__badge-text">Years of<br/>Experience</span>
-          </div>
-        </div>
-        <div class="about__text">
-          <p class="section-eyebrow">About Walker Street Ventures</p>
-          <h2 class="section-heading">Built on Trust.<br/>Driven by Results.</h2>
-          <p>Walker Street Ventures is a full-service real estate investment firm headquartered on the principles of integrity, insight, and lasting value. Founded with a commitment to transforming underutilized assets into thriving communities, we operate across the full spectrum of real estate — from luxury residential to large-scale commercial development.</p>
-          <p>Our team of seasoned professionals brings deep market expertise, disciplined investment analysis, and a hands-on approach to every deal. We don't just invest in properties — we invest in neighborhoods, in futures, and in the people who make them great.</p>
-          <ul class="about__pillars">
-            <li>
-              <div class="about__pillar-icon">&#10003;</div>
-              <div>
-                <strong>Strategic Acquisitions</strong>
-                <p>Identifying high-potential assets before the market catches on.</p>
-              </div>
-            </li>
-            <li>
-              <div class="about__pillar-icon">&#10003;</div>
-              <div>
-                <strong>Value-Add Development</strong>
-                <p>Repositioning and improving assets to maximize long-term returns.</p>
-              </div>
-            </li>
-            <li>
-              <div class="about__pillar-icon">&#10003;</div>
-              <div>
-                <strong>Active Asset Management</strong>
-                <p>Hands-on oversight that protects and grows your investment.</p>
-              </div>
-            </li>
-          </ul>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- Services -->
-  <section class="services" id="services">
+  <!-- Team / Bio -->
+  <section class="team" id="team">
     <div class="container">
       <div class="section-header">
-        <p class="section-eyebrow">What We Do</p>
-        <h2 class="section-heading">Full-Spectrum Real Estate Services</h2>
-        <p class="section-sub">From acquisition to exit, Walker Street Ventures provides comprehensive services across every stage of the real estate lifecycle.</p>
+        <p class="section-eyebrow">Team</p>
+        <h2 class="section-heading">Our People</h2>
       </div>
-      <div class="services__grid">
-        <div class="service-card">
-          <div class="service-card__icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 9.5L12 3l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V9.5z"/><path d="M9 21V12h6v9"/></svg>
-          </div>
-          <h3>Residential Investment</h3>
-          <p>Single-family homes, multi-family units, and luxury residences — we source and manage residential assets with proven appreciation potential.</p>
-        </div>
-        <div class="service-card">
-          <div class="service-card__icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="7" width="20" height="15" rx="1"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2"/><line x1="12" y1="12" x2="12" y2="16"/><line x1="10" y1="14" x2="14" y2="14"/></svg>
-          </div>
-          <h3>Commercial Real Estate</h3>
-          <p>Office, retail, and industrial properties with strong tenant profiles and durable cash-flow characteristics in high-demand markets.</p>
-        </div>
-        <div class="service-card">
-          <div class="service-card__icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
-          </div>
-          <h3>Mixed-Use Development</h3>
-          <p>Creating vibrant, walkable communities that blend residential, retail, and hospitality to generate layered income streams and lasting neighborhood value.</p>
-        </div>
-        <div class="service-card">
-          <div class="service-card__icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-          </div>
-          <h3>Investment Advisory</h3>
-          <p>Expert guidance for institutional and private investors looking to build, optimize, or divest real estate portfolios in today's dynamic market.</p>
-        </div>
-        <div class="service-card">
-          <div class="service-card__icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-          </div>
-          <h3>Asset Management</h3>
-          <p>Proactive property management that reduces vacancy, controls costs, and delivers consistent returns for owners and investors alike.</p>
-        </div>
-        <div class="service-card">
-          <div class="service-card__icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
-          </div>
-          <h3>1031 Exchange Services</h3>
-          <p>Seamless tax-deferred exchange solutions to help investors preserve equity and redeploy capital into higher-performing assets.</p>
-        </div>
-      </div>
-    </div>
-  </section>
 
-  <!-- Properties -->
-  <section class="properties" id="properties">
-    <div class="container">
-      <div class="section-header">
-        <p class="section-eyebrow">Portfolio Highlights</p>
-        <h2 class="section-heading">Featured Properties</h2>
-        <p class="section-sub">A selection of current and recent acquisitions across our growing portfolio.</p>
-      </div>
-      <div class="properties__grid">
+      <div class="bio-card">
+        <div class="bio-card__avatar">ZJ</div>
+        <div class="bio-card__body">
+          <h2 class="bio-card__name">Zachary Janfaza</h2>
+          <p class="bio-card__title">Founder, Walker Street Ventures</p>
+          <p class="bio-card__location">New York City Metropolitan Area</p>
 
-        <div class="property-card">
-          <div class="property-card__img property-card__img--1">
-            <span class="property-card__tag">Residential</span>
+          <div class="bio-card__section">
+            <h3>Experience</h3>
+            <ul class="timeline">
+              <li class="timeline__item">
+                <div class="timeline__meta">
+                  <strong>Oxford Properties Group</strong>
+                  <span class="timeline__date">Jun 2021 – Present · New York, NY</span>
+                </div>
+                <div class="timeline__roles">
+                  <div class="timeline__role">
+                    <span class="timeline__role-title">Associate, Investments</span>
+                    <span class="timeline__role-date">Jan 2024 – Present</span>
+                  </div>
+                  <div class="timeline__role">
+                    <span class="timeline__role-title">Analyst, Investments</span>
+                    <span class="timeline__role-date">Jun 2021 – Jan 2024</span>
+                  </div>
+                </div>
+              </li>
+              <li class="timeline__item">
+                <div class="timeline__meta">
+                  <strong>SL Green Realty Corp.</strong>
+                  <span class="timeline__date">Jul 2020 – Aug 2020 · New York, NY</span>
+                </div>
+                <div class="timeline__roles">
+                  <div class="timeline__role">
+                    <span class="timeline__role-title">Acquisitions Intern</span>
+                  </div>
+                </div>
+              </li>
+              <li class="timeline__item">
+                <div class="timeline__meta">
+                  <strong>The Davis Companies</strong>
+                  <span class="timeline__date">Jul 2019 – Aug 2019 · Greater Boston Area</span>
+                </div>
+                <div class="timeline__roles">
+                  <div class="timeline__role">
+                    <span class="timeline__role-title">Summer Intern</span>
+                  </div>
+                </div>
+              </li>
+            </ul>
           </div>
-          <div class="property-card__body">
-            <h3>The Meridian Residences</h3>
-            <p class="property-card__location">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
-              Downtown Core, Chicago, IL
-            </p>
-            <p>42-unit luxury residential tower featuring rooftop amenities, concierge services, and panoramic city views.</p>
-            <div class="property-card__meta">
-              <span>42 Units</span>
-              <span>96% Occupied</span>
-              <span>Acquired 2023</span>
-            </div>
-          </div>
-        </div>
 
-        <div class="property-card">
-          <div class="property-card__img property-card__img--2">
-            <span class="property-card__tag">Commercial</span>
+          <div class="bio-card__section">
+            <h3>Education</h3>
+            <ul class="timeline">
+              <li class="timeline__item">
+                <div class="timeline__meta">
+                  <strong>Harvard University</strong>
+                  <span class="timeline__date">2017 – 2021</span>
+                </div>
+                <div class="timeline__roles">
+                  <div class="timeline__role">
+                    <span class="timeline__role-title">A.B., Government · Secondary in Economics</span>
+                  </div>
+                </div>
+              </li>
+            </ul>
           </div>
-          <div class="property-card__body">
-            <h3>Walker Commerce Center</h3>
-            <p class="property-card__location">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
-              West Loop, Chicago, IL
-            </p>
-            <p>Class-A office complex with 180,000 sq ft of premium office and ground-floor retail, fully leased to Fortune 500 tenants.</p>
-            <div class="property-card__meta">
-              <span>180K sq ft</span>
-              <span>100% Leased</span>
-              <span>Acquired 2021</span>
-            </div>
-          </div>
-        </div>
 
-        <div class="property-card">
-          <div class="property-card__img property-card__img--3">
-            <span class="property-card__tag">Mixed-Use</span>
-          </div>
-          <div class="property-card__body">
-            <h3>Elm & Fifth District</h3>
-            <p class="property-card__location">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
-              River North, Chicago, IL
-            </p>
-            <p>Transformative mixed-use development with 90 residential units, 12,000 sq ft of curated retail, and a boutique hotel.</p>
-            <div class="property-card__meta">
-              <span>90 Units + Hotel</span>
-              <span>Under Development</span>
-              <span>Est. Delivery 2026</span>
-            </div>
-          </div>
-        </div>
-
-      </div>
-      <div class="properties__cta">
-        <a href="#contact" class="btn btn--primary">Inquire About Our Portfolio</a>
-      </div>
-    </div>
-  </section>
-
-  <!-- Testimonials -->
-  <section class="testimonials">
-    <div class="container">
-      <div class="section-header">
-        <p class="section-eyebrow">Client Voices</p>
-        <h2 class="section-heading">What Our Partners Say</h2>
-      </div>
-      <div class="testimonials__grid">
-        <div class="testimonial">
-          <p class="testimonial__quote">"Walker Street Ventures identified an opportunity in our portfolio that we had completely overlooked. Their market insight and execution were flawless — we saw a 34% increase in asset value within 18 months."</p>
-          <div class="testimonial__author">
-            <div class="testimonial__avatar">MR</div>
-            <div>
-              <strong>Michael R.</strong>
-              <span>Managing Director, Crestline Capital</span>
-            </div>
-          </div>
-        </div>
-        <div class="testimonial">
-          <p class="testimonial__quote">"We've partnered with WSV on three projects now. Their team is professional, transparent, and genuinely invested in delivering results. It's rare to find a real estate partner you can fully trust."</p>
-          <div class="testimonial__author">
-            <div class="testimonial__avatar">SC</div>
-            <div>
-              <strong>Sarah C.</strong>
-              <span>Principal, Harborview Investments</span>
-            </div>
-          </div>
-        </div>
-        <div class="testimonial">
-          <p class="testimonial__quote">"From acquisition through stabilization, Walker Street handled every detail. Their asset management team increased our NOI by 22% in the first year alone."</p>
-          <div class="testimonial__author">
-            <div class="testimonial__avatar">JT</div>
-            <div>
-              <strong>James T.</strong>
-              <span>Family Office Investor</span>
-            </div>
-          </div>
+          <a href="https://www.linkedin.com/in/zachary-janfaza-b5ab87166/" target="_blank" rel="noopener" class="bio-card__linkedin">
+            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+            View LinkedIn Profile
+          </a>
         </div>
       </div>
+
     </div>
   </section>
 
   <!-- Contact -->
   <section class="contact" id="contact">
     <div class="container">
-      <div class="contact__grid">
-        <div class="contact__info">
-          <p class="section-eyebrow">Get In Touch</p>
-          <h2 class="section-heading">Let's Build Something Together</h2>
-          <p>Whether you're looking to invest, develop, or partner with us on an opportunity, we'd love to hear from you. Our team responds within one business day.</p>
-          <ul class="contact__details">
-            <li>
-              <div class="contact__detail-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
-              </div>
-              <div>
-                <strong>Headquarters</strong>
-                <span>123 Walker Street, Suite 1800<br/>Chicago, IL 60601</span>
-              </div>
-            </li>
-            <li>
-              <div class="contact__detail-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 9.81a19.79 19.79 0 01-3.07-8.67A2 2 0 012 .18h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 14.92v2z"/></svg>
-              </div>
-              <div>
-                <strong>Phone</strong>
-                <span>(312) 555-0192</span>
-              </div>
-            </li>
-            <li>
-              <div class="contact__detail-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-              </div>
-              <div>
-                <strong>Email</strong>
-                <span>info@walkerstreetventures.com</span>
-              </div>
-            </li>
-          </ul>
-        </div>
-        <form class="contact__form" id="contactForm">
-          <div class="form-row">
-            <div class="form-group">
-              <label for="firstName">First Name</label>
-              <input type="text" id="firstName" name="firstName" placeholder="John" required />
-            </div>
-            <div class="form-group">
-              <label for="lastName">Last Name</label>
-              <input type="text" id="lastName" name="lastName" placeholder="Smith" required />
-            </div>
-          </div>
-          <div class="form-group">
-            <label for="email">Email Address</label>
-            <input type="email" id="email" name="email" placeholder="john@example.com" required />
-          </div>
-          <div class="form-group">
-            <label for="interest">Area of Interest</label>
-            <select id="interest" name="interest">
-              <option value="">Select an option...</option>
-              <option>Residential Investment</option>
-              <option>Commercial Real Estate</option>
-              <option>Mixed-Use Development</option>
-              <option>Investment Advisory</option>
-              <option>Asset Management</option>
-              <option>1031 Exchange</option>
-              <option>Other</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label for="message">Message</label>
-            <textarea id="message" name="message" rows="5" placeholder="Tell us about your goals or inquiry..."></textarea>
-          </div>
-          <button type="submit" class="btn btn--primary btn--full">Send Message</button>
-          <p class="form-note">By submitting this form you agree to our privacy policy. We never share your information.</p>
-        </form>
+      <div class="contact__inner">
+        <p class="section-eyebrow">Contact</p>
+        <h2 class="section-heading">Get In Touch</h2>
+        <p class="contact__sub">Reach out with questions or opportunities.</p>
+        <a href="mailto:info@walkerstreetventures.com" class="btn btn--primary">info@walkerstreetventures.com</a>
       </div>
     </div>
   </section>
@@ -362,49 +141,12 @@
   <!-- Footer -->
   <footer class="footer">
     <div class="container">
-      <div class="footer__top">
-        <div class="footer__brand">
-          <div class="footer__logo">
-            <span class="nav__logo-mark">WSV</span>
-            <span>Walker Street Ventures</span>
-          </div>
-          <p>Investing in properties, communities, and futures. Walker Street Ventures is a premier real estate investment and development firm based in Chicago, IL.</p>
-        </div>
-        <div class="footer__links">
-          <div class="footer__col">
-            <h4>Company</h4>
-            <ul>
-              <li><a href="#about">About Us</a></li>
-              <li><a href="#services">Services</a></li>
-              <li><a href="#properties">Properties</a></li>
-              <li><a href="#contact">Careers</a></li>
-            </ul>
-          </div>
-          <div class="footer__col">
-            <h4>Services</h4>
-            <ul>
-              <li><a href="#services">Residential</a></li>
-              <li><a href="#services">Commercial</a></li>
-              <li><a href="#services">Mixed-Use</a></li>
-              <li><a href="#services">Advisory</a></li>
-            </ul>
-          </div>
-          <div class="footer__col">
-            <h4>Contact</h4>
-            <ul>
-              <li><a href="#contact">Get in Touch</a></li>
-              <li><a href="mailto:info@walkerstreetventures.com">Email Us</a></li>
-              <li><a href="tel:+13125550192">(312) 555-0192</a></li>
-            </ul>
-          </div>
-        </div>
-      </div>
       <div class="footer__bottom">
-        <p>&copy; 2026 Walker Street Ventures. All rights reserved.</p>
-        <div class="footer__legal">
-          <a href="#">Privacy Policy</a>
-          <a href="#">Terms of Use</a>
+        <div class="footer__logo">
+          <span class="nav__logo-mark">WSV</span>
+          <span>Walker Street Ventures</span>
         </div>
+        <p>&copy; 2026 Walker Street Ventures. All rights reserved.</p>
       </div>
     </div>
   </footer>

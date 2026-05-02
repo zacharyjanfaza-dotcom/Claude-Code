@@ -1,13 +1,15 @@
 """
 Scrapers for WSV deal-flow digest.
 
-Auto-scraped sources (no JS required):
-  - CourtListener (PACER) — bankruptcy filings
-  - Hilco Global, Tiger Group, Heritage Global, Rabin Worldwide — liquidations
-  - Ten-X Commercial, Bid4Assets — foreclosure / REO auctions
+Sources:
+  - CourtListener  — scrapes public HTML search results (no auth needed)
+  - Tiger Group    — follows sub-links from auctions page
+  - Hilco Global   — correct URLs
+  - Heritage Global — correct URL + follow transactions link
+  - Bid4Assets     — correct URL for real estate auctions
+  - Gordon Brothers — industrial liquidations
 
-Crexi and LoopNet block all automated access (Cloudflare).
-They appear as clickable quick-search links in the digest instead.
+Crexi/LoopNet/Ten-X block all automation → manual quick-search links only.
 """
 
 import logging
@@ -27,6 +29,7 @@ HEADERS = {
         "Chrome/124.0.0.0 Safari/537.36"
     ),
     "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
 EAST_COAST_STATES = [
@@ -44,10 +47,9 @@ EAST_COAST_STATE_NAMES = [
 MFG_KEYWORDS = [
     "manufactur", "industrial", "fabricat", "warehouse",
     "distribution", "assembly", "production", "plant", "mill",
-    "factory", "flex space", "light industrial", "processing",
+    "factory", "flex", "light industrial", "processing", "equipment",
+    "machinery", "commercial real estate", "real estate",
 ]
-
-_90_DAYS_AGO = (date.today() - timedelta(days=90)).isoformat()
 
 
 @dataclass
@@ -64,202 +66,310 @@ class Listing:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Generic link-based scraper
-#
-# Instead of guessing CSS class names (which break when sites update),
-# we grab every <a> tag on a page and filter by keyword in the
-# surrounding text. This is far more robust.
+# Helpers
 # ─────────────────────────────────────────────────────────────────────
 
-def _scrape_by_links(
-    base_url: str,
-    source_name: str,
-    property_type: str = "Industrial",
-    require_ec: bool = False,
-) -> list[Listing]:
-    """Fetch a page and return all links whose context matches MFG_KEYWORDS."""
+def _get(url: str, **kwargs) -> requests.Response | None:
     try:
-        resp = requests.get(base_url, headers=HEADERS, timeout=25)
-        resp.raise_for_status()
-        log.debug("%s → HTTP %s, %d bytes", source_name, resp.status_code, len(resp.content))
+        resp = requests.get(url, headers=HEADERS, timeout=20, **kwargs)
+        log.debug("%s → HTTP %s", url, resp.status_code)
+        return resp
     except Exception as exc:
-        log.warning("%s fetch failed: %s", source_name, exc)
-        return []
+        log.warning("GET %s failed: %s", url, exc)
+        return None
 
-    soup = BeautifulSoup(resp.text, "lxml")
-    listings: list[Listing] = []
+
+def _links_from_page(html: str, base_url: str) -> list[dict]:
+    """Return all non-trivial links from a page as {text, url} dicts."""
+    soup = BeautifulSoup(html, "lxml")
+    results = []
     seen: set[str] = set()
-
-    for link in soup.find_all("a", href=True):
-        link_text = link.get_text(" ", strip=True)
-        if not link_text or len(link_text) < 8:
+    for a in soup.find_all("a", href=True):
+        text = a.get_text(" ", strip=True)
+        if not text or len(text) < 6:
             continue
-
-        # Gather surrounding context: parent text up two levels
-        ctx_parts = [link_text]
-        node = link.parent
-        for _ in range(2):
-            if node:
-                ctx_parts.append(node.get_text(" ", strip=True))
-                node = node.parent
-        context = " ".join(ctx_parts).lower()
-
-        if not any(kw in context for kw in MFG_KEYWORDS):
-            continue
-
-        if require_ec:
-            state_match = (
-                any(s.lower() in context for s in EAST_COAST_STATE_NAMES)
-                or any(f" {s.lower()} " in f" {context} " for s in EAST_COAST_STATES)
-            )
-            if not state_match:
-                continue
-
-        href = link["href"]
-        # Skip mailto, tel, anchor-only, javascript links
+        href = a["href"]
         if any(href.startswith(p) for p in ("mailto:", "tel:", "#", "javascript:")):
             continue
-        url = href if href.startswith("http") else urllib.parse.urljoin(base_url, href)
-
-        if url in seen or url == base_url:
+        full = href if href.startswith("http") else urllib.parse.urljoin(base_url, href)
+        if full in seen:
             continue
-        seen.add(url)
+        seen.add(full)
+        parent_text = a.parent.get_text(" ", strip=True) if a.parent else ""
+        results.append({"text": text, "url": full, "context": parent_text})
+    return results
 
-        # Use parent text as description, capped
-        parent_text = link.parent.get_text(" ", strip=True) if link.parent else ""
 
-        listings.append(Listing(
-            source=source_name,
-            title=link_text[:200],
-            url=url,
-            property_type=property_type,
-            description=parent_text[:300],
-        ))
+def _has_keyword(text: str) -> bool:
+    t = text.lower()
+    return any(kw in t for kw in MFG_KEYWORDS)
 
-    log.info("%s: %d listings from %s", source_name, len(listings), base_url)
-    return listings
+
+def _is_east_coast(text: str) -> bool:
+    t = text.lower()
+    return (any(s.lower() in t for s in EAST_COAST_STATE_NAMES)
+            or any(f" {s} " in f" {t} " for s in EAST_COAST_STATES))
 
 
 # ─────────────────────────────────────────────────────────────────────
-# CourtListener — free PACER bankruptcy dockets
-# Uses the /dockets/ REST endpoint with correct filter params.
+# CourtListener — HTML search (public, no auth required)
 # ─────────────────────────────────────────────────────────────────────
+
+_CL_SEARCHES = [
+    "manufacturing bankruptcy",
+    "industrial facility bankruptcy",
+    "warehouse bankruptcy",
+    "factory liquidation",
+]
 
 def scrape_courtlistener() -> list[Listing]:
-    session = requests.Session()
-    seen: set[str] = set()
     listings: list[Listing] = []
+    seen: set[str] = set()
 
-    # Use the /dockets/ endpoint with date_filed__gte (not "filed_after")
-    for term in ["manufacturing", "industrial", "warehouse", "fabrication"]:
-        try:
-            resp = session.get(
-                "https://www.courtlistener.com/api/rest/v4/dockets/",
-                params={
-                    "q": term,
-                    "date_filed__gte": _90_DAYS_AGO,
-                    "order_by": "date_filed desc",
-                    "page_size": 20,
-                },
-                headers={**HEADERS, "Accept": "application/json"},
-                timeout=20,
-            )
-            log.debug("CourtListener '%s' → HTTP %s", term, resp.status_code)
-            if resp.status_code != 200:
+    for query in _CL_SEARCHES:
+        resp = _get(
+            "https://www.courtlistener.com/",
+            params={"q": query, "type": "d", "order_by": "date_filed desc"},
+        )
+        if not resp or resp.status_code != 200:
+            continue
+
+        soup = BeautifulSoup(resp.text, "lxml")
+
+        # CourtListener search results are in <article> or .result blocks
+        for result in soup.select("article, .result, [class*='search-result'], li.pointer"):
+            title_el = result.select_one("h3 a, h4 a, .case-name a, a[href*='/docket/']")
+            if not title_el:
                 continue
+            title = title_el.get_text(" ", strip=True)
+            href = title_el.get("href", "")
+            url = href if href.startswith("http") else "https://www.courtlistener.com" + href
+            if url in seen:
+                continue
+            seen.add(url)
 
-            data = resp.json()
-            results = data.get("results") or []
-            log.debug("CourtListener '%s' → %d results", term, len(results))
+            desc_el = result.select_one("p, .snippet, .description, .meta")
+            desc = desc_el.get_text(" ", strip=True) if desc_el else ""
 
-            for r in results:
-                rel = r.get("absolute_url") or ""
-                url = rel if rel.startswith("http") else "https://www.courtlistener.com" + rel
-                if url in seen:
-                    continue
-                seen.add(url)
+            court_el = result.select_one(".court, [class*='court'], .jurisdiction")
+            court = court_el.get_text(strip=True) if court_el else ""
 
-                case_name = r.get("case_name") or r.get("caseName") or "Unknown"
-                docket_num = r.get("docket_number") or r.get("docketNumber") or ""
-                filed = r.get("date_filed") or r.get("dateFiled") or ""
-                court = (r.get("court") or r.get("court_id") or "").upper()
+            date_el = result.select_one("time, .date, [class*='date']")
+            filed = date_el.get_text(strip=True) if date_el else ""
 
-                listings.append(Listing(
-                    source="CourtListener (PACER)",
-                    title=case_name,
-                    url=url,
-                    location=court,
-                    property_type="Bankruptcy Filing",
-                    description=f"Docket {docket_num} · Filed {filed} · keyword: {term}",
-                ))
+            listings.append(Listing(
+                source="CourtListener (PACER)",
+                title=title,
+                url=url,
+                location=court,
+                property_type="Bankruptcy Filing",
+                description=f"Filed {filed} · {desc[:200]}".strip(" ·"),
+            ))
 
-        except Exception as exc:
-            log.warning("CourtListener '%s': %s", term, exc)
-
-    log.info("CourtListener: %d unique filings", len(listings))
+    log.info("CourtListener: %d filings", len(listings))
     return listings
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Individual site scrapers (all use the generic link scraper)
+# Tiger Group
+# Their /auctions/ page loads fine. Follow sub-links one level deep
+# to find actual sale listings.
 # ─────────────────────────────────────────────────────────────────────
 
-def scrape_hilco() -> list[Listing]:
-    results = []
-    for url in [
-        "https://hilcoglobal.com/service/industrial/",
-        "https://hilcoglobal.com/recent-transactions/",
-    ]:
-        results += _scrape_by_links(url, "Hilco Global", "Industrial Liquidation")
-    # Deduplicate across pages
-    seen, unique = set(), []
-    for l in results:
-        if l.url not in seen:
-            seen.add(l.url)
-            unique.append(l)
-    return unique
-
-
 def scrape_tiger() -> list[Listing]:
-    return _scrape_by_links(
-        "https://www.tigergroup.com/auctions/",
-        "Tiger Group",
-        "Industrial Liquidation Auction",
-    )
+    listings: list[Listing] = []
+    seen: set[str] = set()
 
+    # First pass: get sub-links from the auctions index
+    resp = _get("https://www.tigergroup.com/auctions/")
+    if not resp or resp.status_code != 200:
+        return listings
+
+    sub_links = _links_from_page(resp.text, "https://www.tigergroup.com/auctions/")
+
+    # Follow links that look like individual sale/auction pages
+    auction_urls = [
+        lnk["url"] for lnk in sub_links
+        if "tigergroup.com" in lnk["url"]
+        and any(kw in lnk["url"].lower() for kw in
+                ["auction", "sale", "asset", "machinery", "equipment",
+                 "industrial", "manufactur", "liquidat"])
+    ]
+
+    # Also try direct listing URL patterns
+    for candidate in [
+        "https://www.tigergroup.com/current-sales/",
+        "https://www.tigergroup.com/sales/",
+        "https://www.tigergroup.com/events/",
+    ]:
+        if candidate not in [l["url"] for l in sub_links]:
+            auction_urls.append(candidate)
+
+    # Scrape each candidate page
+    for url in auction_urls[:10]:
+        resp2 = _get(url)
+        if not resp2 or resp2.status_code != 200:
+            continue
+        for lnk in _links_from_page(resp2.text, url):
+            if lnk["url"] in seen:
+                continue
+            if not _has_keyword(lnk["text"] + " " + lnk["context"]):
+                continue
+            seen.add(lnk["url"])
+            listings.append(Listing(
+                source="Tiger Group",
+                title=lnk["text"][:200],
+                url=lnk["url"],
+                property_type="Industrial Liquidation Auction",
+                description=lnk["context"][:300],
+            ))
+
+    log.info("Tiger Group: %d listings", len(listings))
+    return listings
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Hilco Global  (correct URLs)
+# ─────────────────────────────────────────────────────────────────────
+
+_HILCO_URLS = [
+    "https://hilcoglobal.com/real-estate/",
+    "https://hilcoglobal.com/",
+]
+
+def scrape_hilco() -> list[Listing]:
+    listings: list[Listing] = []
+    seen: set[str] = set()
+
+    for base in _HILCO_URLS:
+        resp = _get(base)
+        if not resp or resp.status_code != 200:
+            continue
+        for lnk in _links_from_page(resp.text, base):
+            if lnk["url"] in seen:
+                continue
+            if not _has_keyword(lnk["text"] + " " + lnk["context"]):
+                continue
+            if "hilcoglobal.com" not in lnk["url"]:
+                continue
+            seen.add(lnk["url"])
+            listings.append(Listing(
+                source="Hilco Global",
+                title=lnk["text"][:200],
+                url=lnk["url"],
+                property_type="Industrial Liquidation",
+                description=lnk["context"][:300],
+            ))
+
+    log.info("Hilco Global: %d listings", len(listings))
+    return listings
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Heritage Global  (hgp.com)
+# /transactions/ is the right path based on the nav links seen
+# ─────────────────────────────────────────────────────────────────────
+
+_HGP_URLS = [
+    "https://www.hgp.com/transactions/",
+    "https://www.hgp.com/",
+]
 
 def scrape_heritage() -> list[Listing]:
-    return _scrape_by_links(
-        "https://www.hgp.com/auctions",
-        "Heritage Global",
-        "Industrial / Commercial Auction",
-    )
+    listings: list[Listing] = []
+    seen: set[str] = set()
+
+    for base in _HGP_URLS:
+        resp = _get(base)
+        if not resp or resp.status_code != 200:
+            continue
+        for lnk in _links_from_page(resp.text, base):
+            if lnk["url"] in seen:
+                continue
+            if not _has_keyword(lnk["text"] + " " + lnk["context"]):
+                continue
+            if "hgp.com" not in lnk["url"]:
+                continue
+            seen.add(lnk["url"])
+            listings.append(Listing(
+                source="Heritage Global",
+                title=lnk["text"][:200],
+                url=lnk["url"],
+                property_type="Industrial / Commercial Auction",
+                description=lnk["context"][:300],
+            ))
+
+    log.info("Heritage Global: %d listings", len(listings))
+    return listings
 
 
-def scrape_rabin() -> list[Listing]:
-    return _scrape_by_links(
-        "https://www.rabinworldwide.com/auctions/",
-        "Rabin Worldwide",
-        "Industrial Plant Auction",
-    )
+# ─────────────────────────────────────────────────────────────────────
+# Bid4Assets — real estate auction channel
+# ─────────────────────────────────────────────────────────────────────
 
-
-def scrape_tenx() -> list[Listing]:
-    return _scrape_by_links(
-        "https://www.ten-x.com/listings/",
-        "Ten-X Commercial",
-        "Commercial Auction / REO",
-        require_ec=True,
-    )
-
+_BID4_URLS = [
+    "https://www.bid4assets.com/",
+    "https://www.bid4assets.com/auctions",
+]
 
 def scrape_bid4assets() -> list[Listing]:
-    return _scrape_by_links(
-        "https://www.bid4assets.com/real-estate",
-        "Bid4Assets",
-        "Foreclosure / Government Auction",
-        require_ec=True,
-    )
+    listings: list[Listing] = []
+    seen: set[str] = set()
+
+    for base in _BID4_URLS:
+        resp = _get(base)
+        if not resp or resp.status_code != 200:
+            continue
+        for lnk in _links_from_page(resp.text, base):
+            if lnk["url"] in seen:
+                continue
+            combined = lnk["text"] + " " + lnk["context"]
+            if not _has_keyword(combined):
+                continue
+            seen.add(lnk["url"])
+            listings.append(Listing(
+                source="Bid4Assets",
+                title=lnk["text"][:200],
+                url=lnk["url"],
+                property_type="Foreclosure / Government Auction",
+                description=lnk["context"][:300],
+            ))
+
+    log.info("Bid4Assets: %d listings", len(listings))
+    return listings
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Gordon Brothers — industrial liquidations
+# ─────────────────────────────────────────────────────────────────────
+
+def scrape_gordon_brothers() -> list[Listing]:
+    listings: list[Listing] = []
+    seen: set[str] = set()
+
+    for base in ["https://www.gordonbrothers.com/services/assets/",
+                 "https://www.gordonbrothers.com/"]:
+        resp = _get(base)
+        if not resp or resp.status_code != 200:
+            continue
+        for lnk in _links_from_page(resp.text, base):
+            if lnk["url"] in seen:
+                continue
+            if not _has_keyword(lnk["text"] + " " + lnk["context"]):
+                continue
+            if "gordonbrothers.com" not in lnk["url"]:
+                continue
+            seen.add(lnk["url"])
+            listings.append(Listing(
+                source="Gordon Brothers",
+                title=lnk["text"][:200],
+                url=lnk["url"],
+                property_type="Industrial Liquidation",
+                description=lnk["context"][:300],
+            ))
+
+    log.info("Gordon Brothers: %d listings", len(listings))
+    return listings
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -275,12 +385,12 @@ MANUAL_SEARCH_LINKS = {
     "LoopNet — Industrial East Coast":
         "https://www.loopnet.com/search/industrial-properties/east-coast-usa/for-sale/",
     "CourtListener — Bankruptcy Search":
-        "https://www.courtlistener.com/?type=d&q=manufacturing+industrial"
-        "&order_by=date_filed+desc",
+        "https://www.courtlistener.com/?q=manufacturing+industrial"
+        "&type=d&order_by=date_filed+desc",
     "Auction.com — Commercial":
         "https://www.auction.com/commercial/",
-    "Ten-X — Commercial Auctions":
-        "https://www.ten-x.com/listings/",
     "Bid4Assets — Real Estate":
-        "https://www.bid4assets.com/real-estate",
+        "https://www.bid4assets.com/",
+    "Tiger Group — Auctions":
+        "https://www.tigergroup.com/auctions/",
 }

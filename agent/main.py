@@ -19,12 +19,11 @@ import anthropic
 
 from scraper import (
     scrape_courtlistener,
-    scrape_tenx,
     scrape_bid4assets,
     scrape_hilco,
     scrape_tiger,
     scrape_heritage,
-    scrape_rabin,
+    scrape_gordon_brothers,
     MANUAL_SEARCH_LINKS,
 )
 from analyzer import analyze_listings
@@ -40,13 +39,12 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 SCRAPERS = [
-    ("CourtListener",    scrape_courtlistener),
-    ("Ten-X Commercial", scrape_tenx),
-    ("Bid4Assets",       scrape_bid4assets),
-    ("Hilco Global",     scrape_hilco),
-    ("Tiger Group",      scrape_tiger),
-    ("Heritage Global",  scrape_heritage),
-    ("Rabin Worldwide",  scrape_rabin),
+    ("CourtListener",   scrape_courtlistener),
+    ("Bid4Assets",      scrape_bid4assets),
+    ("Hilco Global",    scrape_hilco),
+    ("Tiger Group",     scrape_tiger),
+    ("Heritage Global", scrape_heritage),
+    ("Gordon Brothers", scrape_gordon_brothers),
 ]
 
 
@@ -71,34 +69,32 @@ def run_diagnose() -> None:
         )
     }
 
-    # 1. CourtListener API probe
-    print("\n═══ CourtListener API ═══")
-    for term in ["manufacturing", "industrial"]:
+    # 1. CourtListener HTML probe
+    print("\n═══ CourtListener HTML Search ═══")
+    for term in ["manufacturing bankruptcy", "industrial facility bankruptcy"]:
         try:
             r = req.get(
-                "https://www.courtlistener.com/api/rest/v4/dockets/",
-                params={"q": term, "page_size": 5, "order_by": "date_filed desc"},
-                headers={**headers, "Accept": "application/json"},
+                "https://www.courtlistener.com/",
+                params={"q": term, "type": "d", "order_by": "date_filed desc"},
+                headers=headers,
                 timeout=15,
             )
-            data = r.json()
-            count = data.get("count", "?")
-            results = data.get("results") or []
-            print(f"  q={term!r} → HTTP {r.status_code}, count={count}, "
-                  f"results_in_page={len(results)}")
+            soup = BS(r.text, "lxml")
+            results = soup.select("article, .result, [class*='search-result']")
+            print(f"  q={term!r} → HTTP {r.status_code}, result blocks found: {len(results)}")
             for res in results[:2]:
-                print(f"    • {res.get('case_name') or res.get('caseName', '(no name)')}")
+                title = res.select_one("h3 a, h4 a, a[href*='/docket/']")
+                print(f"    • {title.get_text(strip=True) if title else '(no title found)'}")
         except Exception as exc:
             print(f"  q={term!r} → ERROR: {exc}")
 
     # 2. HTML site probes
     sites = [
-        ("Hilco Global",    "https://hilcoglobal.com/service/industrial/"),
+        ("Hilco Global",    "https://hilcoglobal.com/real-estate/"),
         ("Tiger Group",     "https://www.tigergroup.com/auctions/"),
-        ("Heritage Global", "https://www.hgp.com/auctions"),
-        ("Rabin Worldwide", "https://www.rabinworldwide.com/auctions/"),
-        ("Ten-X",           "https://www.ten-x.com/listings/"),
-        ("Bid4Assets",      "https://www.bid4assets.com/real-estate"),
+        ("Heritage Global", "https://www.hgp.com/transactions/"),
+        ("Gordon Brothers", "https://www.gordonbrothers.com/services/assets/"),
+        ("Bid4Assets",      "https://www.bid4assets.com/"),
     ]
     for name, url in sites:
         print(f"\n═══ {name} ({url}) ═══")

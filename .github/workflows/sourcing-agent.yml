@@ -3,7 +3,12 @@ name: WSV Sourcing Agent
 on:
   schedule:
     - cron: "0 12 * * 1"   # Every Monday at 12pm UTC (8am ET)
-  workflow_dispatch:         # Manual "Run workflow" button in GitHub UI
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Run mode: 'send' (default) or 'diagnose'"
+        required: false
+        default: "send"
 
 jobs:
   run:
@@ -22,7 +27,12 @@ jobs:
         run: pip install -r agent/requirements.txt
 
       - name: Run sourcing agent
-        run: python agent/main.py
+        run: |
+          if [ "${{ github.event.inputs.mode }}" = "diagnose" ]; then
+            python agent/main.py --diagnose
+          else
+            python agent/main.py
+          fi
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}

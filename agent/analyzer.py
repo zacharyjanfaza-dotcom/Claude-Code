@@ -46,23 +46,29 @@ def analyze_listings(
         })
 
     system_prompt = """You are an analyst for Walker Street Ventures, a real estate investment firm
-that acquires (1) shallow bay industrial properties and (2) unanchored strip retail along the
-East Coast of the United States. Your job is to review sourced listings and identify the most
-actionable opportunities.
+that acquires value-add properties along the East Coast of the United States. You are looking
+for off-market or lightly marketed deals where institutional competition is minimal.
 
-Shallow bay industrial criteria:
-- Single-story, multi-tenant or small-bay industrial/flex buildings
-- East Coast submarkets (MA, RI, CT, NY, NJ, PA, MD, DE, VA, NC, SC, GA, FL)
-- Supply-constrained infill/last-mile locations are preferred
-- Typical sizes: 10,000 – 200,000 SF
-- Value-add, repositioning, or below-market rents preferred
+INVESTMENT CRITERIA (ALL must apply):
+- East Coast states only: MA, RI, CT, NY, NJ, PA, MD, DE, VA, NC, SC, GA, FL, DC
+- Deal size: sub $5 million (price, auction estimate, or asset value)
+- Asset types: (1) shallow bay industrial / flex / light manufacturing, (2) unanchored strip retail,
+  (3) manufacturing or industrial facilities available through bankruptcy/liquidation
+- Strongly prefer off-market, distressed, tax sale, foreclosure, or liquidation situations
+- Avoid: broadly marketed listings with major broker (CBRE, JLL, Cushman, Eastdil, Newmark)
+  acting as exclusive sell-side advisor, institutional portfolio trades, and any deal where
+  a large PE firm or REIT is the likely buyer
 
-Bankruptcy/liquidation criteria:
-- Manufacturing or industrial facilities that may become available below market
-- Chapter 7 liquidations and Chapter 11 reorganizations with real estate components
-- East Coast preferred but national bankruptcy filings with EC facilities are relevant
+SCORING GUIDANCE:
+- Highest priority: bankruptcy liquidations, tax deed auctions, receivership sales, sheriff sales,
+  motivated private sellers — these have less competition from deep-pocketed buyers
+- Medium priority: small-broker or direct-seller listings under $5M, value-add retail or industrial
+  with below-market rents or deferred maintenance
+- Exclude: anything that reads like a national marketing campaign, trophy assets, ground leases,
+  new construction, or deals clearly above $5M
 
-For each listing you select, provide a 1-2 sentence rationale explaining why it fits the thesis."""
+For each listing you select, write a 1-2 sentence rationale explaining specifically why it fits
+(distress angle, size, location, lack of institutional interest, etc.)."""
 
     user_prompt = f"""Here are {len(payload)} sourced listings from today's run.
 Please analyze them and return a JSON object with these exact keys:
@@ -90,8 +96,10 @@ Please analyze them and return a JSON object with these exact keys:
   "summary": "A 2-3 sentence executive summary of this week's deal flow."
 }}
 
-Select the top 10 industrial listings and top 5 bankruptcy/liquidation opportunities that best fit
-the Walker Street Ventures thesis. If fewer qualify, include only those that do.
+Select up to 8 industrial/retail listings and up to 5 bankruptcy/liquidation opportunities that
+best fit the criteria above. Be selective — only include listings that are genuinely actionable
+(right size, right geography, minimal institutional competition). If fewer than that qualify,
+include only those that truly fit. Do not pad the list.
 
 Listings:
 {json.dumps(payload, indent=2)}"""

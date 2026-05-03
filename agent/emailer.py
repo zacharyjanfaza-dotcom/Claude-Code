@@ -91,7 +91,7 @@ def build_html(analysis: dict) -> str:
         industrial_section = f"""
         <h2 style="font-family:Georgia,serif;color:#0d1b2a;font-size:1.05rem;
                    border-bottom:2px solid #c9a84c;padding-bottom:8px;margin-top:32px;">
-          Shallow Bay Industrial — {len(top_industrial)} listings
+          Industrial &amp; Retail — {len(top_industrial)} opportunities
         </h2>
         <table width="100%" cellpadding="0" cellspacing="0"
                style="border-collapse:collapse;font-size:0.88rem;color:#1c1c1c;">

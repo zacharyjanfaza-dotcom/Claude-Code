@@ -333,6 +333,14 @@ a { text-decoration: none; color: inherit; }
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.bio-card__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
 }
 
 .bio-card__name {
